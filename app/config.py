@@ -32,3 +32,32 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+def truncate_to_budget(text: str, label: str = "content") -> tuple[str, bool]:
+    """Truncate text to half the token budget before passing to an LLM.
+
+    Returns (text, was_truncated). Using half the budget leaves room for
+    the system prompt, history, and the model's response.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    max_chars = (settings.max_token_budget // 2) * 4
+    if len(text) <= max_chars:
+        return text, False
+    truncated = text[:max_chars] + "\n\n[content truncated to fit token budget]"
+    logger.warning(f"token_budget_truncated label={label} original_chars={len(text)} max_chars={max_chars}")
+    return truncated, True
+
+
+def validate_settings() -> None:
+    """Fail fast on startup if required credentials are missing."""
+    missing = []
+    if not settings.mock_mode:
+        if not settings.groq_api_key:
+            missing.append("GROQ_API_KEY")
+        if not settings.tavily_api_key:
+            missing.append("TAVILY_API_KEY")
+    if missing:
+        raise RuntimeError(
+            f"Missing required environment variables: {', '.join(missing)}. "
+            f"Copy .env.example to .env and fill in the values."
+        )

@@ -73,7 +73,7 @@ Full end-to-end latency depends on live API conditions and is better tracked thr
 
 ## What's not in the test suite (and why)
 
-**Live groundedness / hallucination** — verifying the final answer is grounded in search results requires a real LLM call. Non-deterministic and expensive for CI. The right approach is a periodic offline eval against a golden set.
+**Live groundedness / hallucination** — `test_groundedness_answer_references_mock_findings` covers groundedness in mock mode by verifying the answer references content from the findings. For live LLM output, full verification requires real API calls which are non-deterministic and expensive for CI. The right approach for production is a periodic offline eval against a golden set with semantic similarity scoring.
 
 **Live latency and cost** — these fluctuate with API conditions. Tracked via observability logs, not tests.
 

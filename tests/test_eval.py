@@ -126,6 +126,49 @@ def test_token_budget_guard_fires():
 # Decomposer — query splitting
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Groundedness — answer references findings content
+# ---------------------------------------------------------------------------
+
+def test_groundedness_answer_references_mock_findings():
+    """In mock mode, the answer should reference content from the mock findings."""
+    from unittest.mock import patch
+    from langchain_core.messages import HumanMessage
+    from app.graph import build_graph
+
+    with patch.object(settings, "mock_mode", True):
+        g = build_graph()
+        config = {"configurable": {"thread_id": "groundedness-test"}}
+        result = g.invoke(
+            {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0},
+            config,
+        )
+
+    answer = result["messages"][-1].content.lower()
+    assert len(answer) > 0, "answer should not be empty"
+    assert "mock" in answer or "company" in answer or "revenue" in answer or "funding" in answer, \
+        "answer should reference content from mock findings"
+
+
+def test_truncate_to_budget_no_truncation():
+    """Short text should pass through unchanged."""
+    from app.config import truncate_to_budget
+    text = "Short content"
+    result, was_truncated = truncate_to_budget(text)
+    assert result == text
+    assert was_truncated is False
+
+
+def test_truncate_to_budget_truncates_large_content():
+    """Content exceeding half the budget should be truncated."""
+    from app.config import truncate_to_budget, settings
+    oversized = "x" * (settings.max_token_budget * 4)
+    result, was_truncated = truncate_to_budget(oversized)
+    assert was_truncated is True
+    assert len(result) < len(oversized)
+    assert "truncated" in result
+
+
 def test_decomposer_splits_compound_query():
     """Compound query should produce multiple sub-queries."""
     from unittest.mock import patch, MagicMock

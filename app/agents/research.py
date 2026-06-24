@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.config import truncate_to_budget
 from app.llm import get_llm
 from app.state import AgentState
 from app.tools.search import tavily_search
@@ -56,6 +57,7 @@ def research_node(state: AgentState) -> dict:
     all_raw = [r[0] for r in fetch_results]
     result_counts = [r[1] for r in fetch_results]
     raw_research = "\n\n".join(all_raw)
+    raw_research, _ = truncate_to_budget(raw_research, label="research_raw")
 
     for q, count in zip(queries, result_counts):
         logger.info(f"search query={repr(q)} results={count}")

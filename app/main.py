@@ -9,6 +9,7 @@ Exposes a small JSON API plus a static chat UI:
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,7 +19,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from app.config import settings
+from app.config import settings, validate_settings
 from app.graph import graph
 
 logging.basicConfig(
@@ -27,7 +28,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Multi-Agent Research Assistant")
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    validate_settings()
+    logger.info("startup validation passed")
+    yield
+
+
+app = FastAPI(title="Multi-Agent Research Assistant", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,6 +43,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+def health() -> dict:
+    return {"status": "ok", "mock_mode": settings.mock_mode}
 
 
 class ChatRequest(BaseModel):

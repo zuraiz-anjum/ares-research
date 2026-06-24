@@ -68,3 +68,20 @@ def resume(req: ResumeRequest) -> dict:
 **Fix:** Added `original_query: str` to `AgentState` and populated it in the clarity node before the interrupt fires. Both research and validator now read from `state["original_query"]` which is set once per turn and never changes regardless of how many messages get added after it.
 
 **Prevention:** In a multi-turn system, never rely on `messages[-1]` to recover the current question ,that index shifts as the conversation grows. Store the original query in a dedicated state field at the start of each turn.
+
+---
+
+## Bug 6 — Synthesis uses raw web scrape instead of processed findings
+
+**Location:** `app/agents/synthesis.py:22`
+
+**Symptom:** The final answer is written using raw unfiltered web content instead of the clean research summary. This means the LLM gets fed messy scraped text full of irrelevant content, and any malicious text in a web page gets passed directly into the prompt.
+
+**Root cause:** The line `state.get("raw_research", "") or state.get("findings", "")` uses Python's `or` which returns the first truthy value. Since `raw_research` is always populated after a search, it always wins and `findings` is never used. The research agent already did the work of summarizing `raw_research` into clean `findings` but synthesis was throwing that away and going back to the raw content.
+
+**Fix:** Swapped the order so `findings` is preferred and `raw_research` is only a fallback:
+```python
+research = state.get("findings", "") or state.get("raw_research", "")
+```
+
+**Prevention:** When chaining fallbacks with `or`, always put the preferred value first. Raw external content should never be the default ,always prefer the processed, trusted version.

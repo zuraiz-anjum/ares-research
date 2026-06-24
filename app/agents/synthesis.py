@@ -19,7 +19,7 @@ Research findings:
 
 
 def synthesis_node(state: AgentState) -> dict:
-    research = state.get("raw_research", "") or state.get("findings", "")
+    research =state.get("findings", "") or state.get("raw_research", "") 
     history = state["messages"]
 
     system = SYNTHESIS_SYSTEM_PROMPT.format(research=research)

@@ -36,6 +36,9 @@ def validator_node(state: AgentState) -> dict:
     )
 
     # Record that we've used another research attempt.
-    state["attempts"] = state.get("attempts", 0) + 1
+    return {
+    "validation_result": verdict.validation_result,
+    "attempts": state.get("attempts", 0) + 1,
+}
 
-    return {"validation_result": verdict.validation_result}
+    

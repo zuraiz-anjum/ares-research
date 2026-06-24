@@ -1,8 +1,8 @@
 """Graph definition.
 
-Wires the four agents into a LangGraph state machine:
+Wires the five agents into a LangGraph state machine:
 
-    START -> clarity -> research -> (validator | synthesis)
+    START -> clarity -> decomposer -> research -> (validator | synthesis)
     validator -> (research | synthesis)
     synthesis -> END
 
@@ -17,6 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.clarity import clarity_node
+from app.agents.decomposer import decomposer_node
 from app.agents.research import research_node
 from app.agents.synthesis import synthesis_node
 from app.agents.validator import validator_node
@@ -44,12 +45,14 @@ def build_graph():
     builder = StateGraph(AgentState)
 
     builder.add_node("clarity", clarity_node)
+    builder.add_node("decomposer", decomposer_node)
     builder.add_node("research", research_node)
     builder.add_node("validator", validator_node)
     builder.add_node("synthesis", synthesis_node)
 
     builder.add_edge(START, "clarity")
-    builder.add_edge("clarity", "research")
+    builder.add_edge("clarity", "decomposer")
+    builder.add_edge("decomposer", "research")
     builder.add_conditional_edges(
         "research", route_after_research, {"validator": "validator", "synthesis": "synthesis"}
     )

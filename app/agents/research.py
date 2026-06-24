@@ -26,25 +26,34 @@ class ResearchResult(BaseModel):
     confidence_score: int = Field(ge=0, le=10)
 
 
-def _build_query(state: AgentState) -> str:
-    """Construct the search query from the user's question (and any clarification)."""
+def _get_queries(state: AgentState) -> list[str]:
+    """Return sub-queries from decomposer, or fall back to single query."""
+    sub_queries = state.get("sub_queries")
+    if sub_queries:
+        return sub_queries
     question = state["original_query"]
     clarification = state.get("clarification")
-    if clarification:
-        return f"{question} {clarification}"
-    return question
+    return [f"{question} {clarification}".strip() if clarification else question]
 
 
 def research_node(state: AgentState) -> dict:
-    query = _build_query(state)
-    results = tavily_search(query)
-    raw_research = "\n\n".join(r.get("content", "") for r in results)
+    queries = _get_queries(state)
+    original_question = state.get("original_query", queries[0])
+
+    # Run all sub-queries and merge results.
+    all_raw = []
+    for query in queries:
+        results = tavily_search(query)
+        all_raw.append(f"=== Results for: {query} ===\n" +
+                       "\n\n".join(r.get("content", "") for r in results))
+
+    raw_research = "\n\n".join(all_raw)
 
     llm = get_llm().with_structured_output(ResearchResult)
     result: ResearchResult = llm.invoke(
         [
             SystemMessage(content=RESEARCH_SYSTEM_PROMPT),
-            HumanMessage(content=f"User question: {query}\n\nSearch results:\n{raw_research}"),
+            HumanMessage(content=f"User question: {original_question}\n\nSearch results:\n{raw_research}"),
         ]
     )
 

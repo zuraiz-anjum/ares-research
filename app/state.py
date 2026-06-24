@@ -28,3 +28,6 @@ class AgentState(TypedDict, total=False):
     attempts: int                  # number of research attempts so far
 
     original_query: str
+
+    # Decomposer agent output.
+    sub_queries: list[str]          # parallel sub-queries for compound questions

@@ -11,13 +11,16 @@ import logging
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.config import settings, validate_settings
 from app.graph import graph
@@ -35,7 +38,10 @@ async def lifespan(_: FastAPI):
     yield
 
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Multi-Agent Research Assistant", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,17 +92,17 @@ def _run(inputs: dict | Command, thread_id: str) -> dict:
 
 
 @app.post("/chat")
-def chat(req: ChatRequest) -> dict:
+@limiter.limit("20/minute")
+def chat(request: Request, req: ChatRequest) -> dict:
     thread_id = req.thread_id or str(uuid.uuid4())
     inputs = {"messages": [HumanMessage(content=req.message)], "attempts": 0}
     return _run(inputs, thread_id)
 
 
 @app.post("/resume")
-def resume(req: ResumeRequest) -> dict:
-    # Continue the conversation now that the user has clarified.
-    
-    return _run(Command(resume=req.clarification),req.thread_id)
+@limiter.limit("20/minute")
+def resume(request: Request, req: ResumeRequest) -> dict:
+    return _run(Command(resume=req.clarification), req.thread_id)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

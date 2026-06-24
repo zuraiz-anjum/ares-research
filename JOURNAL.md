@@ -22,6 +22,8 @@ When fixing the resume endpoint, Claude wrote `from langchain_protocol import Co
 
 Claude also had path errors at one point, attempting to write a file to `app/.env.example` when the file is in the root directory, not inside `app/`. Small thing but it would have broken the commit if I hadn't caught it.
 
+Claude suggested using `FakeListChatModel` for full LLM mocking in mock mode. I implemented it, ran the tests, and it failed straight away. `FakeListChatModel` doesn't support `.with_structured_output()` which all four agents use, and Claude didn't flag this limitation at all. Rather than try to hack around it, I stepped back and took a different approach — adding `settings.mock_mode` checks directly inside each agent node and returning hardcoded responses. That turned out to be simpler, more reliable, and actually clearer about what mock mode does than trying to fake the LLM itself.
+
 ## Honest self-assessment
 
 What's solid: the bug fixes are thorough and well-reasoned. I understand every one of them well enough to explain live on camera, not just what the fix is, but why the original code was wrong at a conceptual level. The eval harness covers routing correctness including the boundary cases that caught two of the bugs. The production hardening (retries, timeout, token budget, bounded context, logging) addresses real failure modes, not just checkboxes.

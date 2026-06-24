@@ -99,7 +99,18 @@
 **Trade-off:** Mocking the LLM with FakeListChatModel doesn't work cleanly because agents use `.with_structured_output()` which FakeListChatModel doesn't support. Rather than building a custom fake LLM, the test suite focuses on routing functions (which need no LLM) and uses direct patching for the few tests that need to inspect LLM inputs. This is more practical and gives better coverage than a fragile full mock.
 
 
-## 10. Spec ambiguities I noticed
+## 10. SqliteSaver instead of MemorySaver for conversation persistence
+
+**Context:** The baseline used MemorySaver which stores all conversation state in memory. Every server restart wipes all active conversations, which would be embarrassing in any real deployment.
+
+**Options:** Keep MemorySaver, use SqliteSaver (SQLite file), use RedisSaver or PostgresSaver.
+
+**Choice:** SqliteSaver with a local `checkpoints.db` file.
+
+**Trade-off:** SqliteSaver requires no external service — SQLite is built into Python. Conversations now survive server restarts and deployments. The downside is that the SQLite file grows indefinitely without a cleanup strategy, and SQLite has limited concurrency under high load. For a production system with real traffic, Postgres would be the right choice. For this project, SQLite is the right balance between persistence and simplicity.
+
+
+## 11. Spec ambiguities I noticed
 
 **README says OPENAI_API_KEY, brief says you can swap providers.** I swapped to Groq and documented it here rather than modifying the original README, which is the baseline artifact.
 

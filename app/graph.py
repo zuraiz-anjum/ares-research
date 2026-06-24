@@ -13,7 +13,9 @@ Routing is conditional on each agent's output:
     and we still have attempts left, otherwise it proceeds to synthesis.
 """
 
-from langgraph.checkpoint.memory import MemorySaver
+import sqlite3
+
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.clarity import clarity_node
@@ -61,7 +63,8 @@ def build_graph():
     )
     builder.add_edge("synthesis", END)
 
-    checkpointer = MemorySaver()
+    conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
     return builder.compile(checkpointer=checkpointer)
 
 

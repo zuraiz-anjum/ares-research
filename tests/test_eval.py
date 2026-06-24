@@ -122,6 +122,44 @@ def test_token_budget_guard_fires():
 # Latency — mock mode should be fast
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Decomposer — query splitting
+# ---------------------------------------------------------------------------
+
+def test_decomposer_splits_compound_query():
+    """Compound query should produce multiple sub-queries."""
+    from unittest.mock import patch, MagicMock
+    from app.agents.decomposer import decomposer_node
+
+    mock_result = MagicMock()
+    mock_result.queries = ["Stripe recent funding", "OpenAI recent funding"]
+    mock_result.is_compound = True
+
+    with patch("app.agents.decomposer.get_llm") as mock_llm:
+        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
+        result = decomposer_node({"original_query": "Compare Stripe and OpenAI funding"})
+
+    assert result["sub_queries"] == ["Stripe recent funding", "OpenAI recent funding"]
+    assert len(result["sub_queries"]) == 2
+
+
+def test_decomposer_keeps_simple_query():
+    """Simple query should produce a single sub-query."""
+    from unittest.mock import patch, MagicMock
+    from app.agents.decomposer import decomposer_node
+
+    mock_result = MagicMock()
+    mock_result.queries = ["Stripe company overview"]
+    mock_result.is_compound = False
+
+    with patch("app.agents.decomposer.get_llm") as mock_llm:
+        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
+        result = decomposer_node({"original_query": "Tell me about Stripe"})
+
+    assert len(result["sub_queries"]) == 1
+    assert result["sub_queries"][0] == "Stripe company overview"
+
+
 def test_mock_search_latency():
     """Mock search should complete near-instantly — no network call."""
     from app.tools.search import tavily_search, MOCK_RESULTS

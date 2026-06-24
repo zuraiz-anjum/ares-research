@@ -10,11 +10,15 @@ Sub-queries are independent and executed in parallel by the research agent,
 avoiding the sequential dependency assumption of Least-to-Most prompting.
 """
 
+import logging
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from app.llm import get_llm
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 DECOMPOSER_SYSTEM_PROMPT = """You are the Query Decomposer in a company research assistant.
 
@@ -51,4 +55,8 @@ def decomposer_node(state: AgentState) -> dict:
         HumanMessage(content=full_question),
     ])
 
+    logger.info(
+        f"decomposition compound={result.is_compound} "
+        f"queries={result.queries}"
+    )
     return {"sub_queries": result.queries}

@@ -5,6 +5,7 @@ Tavily search tool, summarises the findings, and rates its own confidence in
 how well the findings answer the user's question.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -40,13 +41,17 @@ def research_node(state: AgentState) -> dict:
     queries = _get_queries(state)
     original_question = state.get("original_query", queries[0])
 
-    # Run all sub-queries and merge results.
-    all_raw = []
-    for query in queries:
+    # Run all sub-queries in parallel — no sequential dependency between them.
+    def fetch(query: str) -> tuple[str, int]:
         results = tavily_search(query)
-        all_raw.append(f"=== Results for: {query} ===\n" +
-                       "\n\n".join(r.get("content", "") for r in results))
+        content = f"=== Results for: {query} ===\n" + "\n\n".join(r.get("content", "") for r in results)
+        return content, len(results)
 
+    with ThreadPoolExecutor() as executor:
+        fetch_results = list(executor.map(fetch, queries))
+
+    all_raw = [r[0] for r in fetch_results]
+    result_counts = [r[1] for r in fetch_results]
     raw_research = "\n\n".join(all_raw)
 
     llm = get_llm().with_structured_output(ResearchResult)
@@ -57,8 +62,16 @@ def research_node(state: AgentState) -> dict:
         ]
     )
 
+    # Penalise confidence if any sub-query returned sparse or no results.
+    confidence = result.confidence_score
+    min_results = min(result_counts)
+    if min_results == 0:
+        confidence = max(0, confidence - 3)
+    elif len(queries) > 1 and min_results < 2:
+        confidence = max(0, confidence - 1)
+
     return {
         "findings": result.findings,
         "raw_research": raw_research,
-        "confidence_score": result.confidence_score,
+        "confidence_score": confidence,
     }

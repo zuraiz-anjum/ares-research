@@ -4,7 +4,7 @@ The research agent uses this to gather news, financials and recent
 developments about a company.
 """
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, stop_after_delay, wait_exponential
 from tavily import TavilyClient
 
 from app.config import settings
@@ -28,7 +28,7 @@ MOCK_RESULTS = [
 
 @retry(
     retry=retry_if_exception_type(Exception),
-    stop=stop_after_attempt(3),
+    stop=(stop_after_attempt(3) | stop_after_delay(30)),
     wait=wait_exponential(multiplier=1, min=2, max=10),
     reraise=True,
 )

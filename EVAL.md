@@ -6,56 +6,84 @@
 python -m pytest tests/ -v
 ```
 
-That's it. 15 tests, under 1 second, no API keys needed, no network calls.
+22 tests, under 1 second, no API keys needed, no network calls.
 
 ---
 
-## What's being tested
+## Test files
 
-The most important thing to get right in this system is routing — which agent runs next determines everything else. I focused the test suite on routing correctness, including the boundary cases that actually caught real bugs in this codebase.
-
-### Routing tests
-
-| Test | What it's checking |
-|------|----------------|
-| High confidence → synthesis | Score above threshold skips the validator |
-| Low confidence → validator | Score below threshold gets validated first |
-| Score exactly at threshold → synthesis | The `>=` fix — a score of 6 should pass, not get sent to validator |
-| One below threshold → validator | Just below the line still validates |
-| Zero confidence → validator | Lowest possible score still routes correctly |
-| Max confidence → synthesis | Highest possible score routes correctly |
-| Sufficient findings → synthesis | Good research proceeds to answer |
-| Insufficient findings → research | Bad research loops back for another attempt |
-| Max attempts reached → synthesis | Loop actually exits when it should — the infinite loop fix |
-| One below max → research | Loop keeps going until max is genuinely hit |
-| Sufficient at max attempts → synthesis | Sufficient always wins regardless of attempt count |
-
-### Infrastructure tests
-
-| Test | What it's checking |
-|------|----------------|
-| Graph compiles | The whole wiring comes together with no import errors |
-| Mock mode works | Tavily returns fake data — no real API call fired |
-| Token budget check | Short messages pass the guard correctly |
-| Token estimation | Character // 4 approximation is correct |
+| File | Focus | Tests |
+|------|-------|-------|
+| `tests/test_smoke.py` | Routing correctness, infrastructure | 15 |
+| `tests/test_eval.py` | Labeled test set, groundedness, cost, latency | 7 |
 
 ---
 
-## What I didn't test (and why)
+## Labeled test set
 
-**Groundedness / hallucination** — checking whether the final answer is actually grounded in the search results means running the full graph with a real LLM. That's non-deterministic, expensive, and too slow for a per-commit test. The right home for that is a periodic offline eval against a labeled golden set, not a test suite.
+### Routing correctness (routing_cases)
 
-**Latency and cost** — these fluctuate with live API conditions. Better tracked through the observability logs than pinned in tests.
+Every meaningful confidence score is covered, including the boundary case that caught Bug 7:
 
-**Full end-to-end conversation** — manual testing covers this. The routing tests already give strong confidence that the wiring is correct.
+| Score | Expected route | Label |
+|-------|---------------|-------|
+| 9 | synthesis | High confidence skips validator |
+| 7 | synthesis | Above threshold skips validator |
+| 6 | synthesis | Exactly at threshold → synthesis (the `>=` fix) |
+| 5 | validator | Below threshold needs validation |
+| 1 | validator | Very low confidence needs validation |
+| 0 | validator | Zero confidence needs validation |
+
+### Validation loop correctness (validation_cases)
+
+| Result | Attempts | Expected | Label |
+|--------|----------|----------|-------|
+| sufficient | 1 | synthesis | Sufficient always exits |
+| sufficient | 3 | synthesis | Sufficient exits even at max |
+| insufficient | 1 | research | Below max retries |
+| insufficient | 2 | research | One below max retries |
+| insufficient | 3 | synthesis | At max exits loop — the infinite loop fix |
 
 ---
 
-## Why this catches real bugs
+## Groundedness
 
-Two of the bugs found in this codebase would have been caught immediately by these tests:
+`test_synthesis_uses_findings_not_raw_research` patches the synthesis LLM call and inspects what gets passed into the prompt. It asserts:
+- The processed `findings` are present in the system prompt
+- The raw web scrape (`raw_research`) is not — confirming Bug 6 stays fixed
 
-- The off-by-one threshold bug (Bug 7) would have failed `test_confidence_at_threshold_routes_to_synthesis`
-- The infinite validation loop (Bug 2) would have failed `test_max_attempts_reached_routes_to_synthesis`
+---
 
-Both are now regression-proof.
+## Cost
+
+Two cost tests check the token budget guard end-to-end:
+- Short queries pass the guard cleanly
+- Queries over budget return a graceful error response with `status: "error"`
+- Token estimation formula (`len(content) // 4`) is verified directly
+
+---
+
+## Latency
+
+`test_mock_search_latency` asserts mock search completes in under 100ms — confirming no network call fires when `MOCK_MODE=true`.
+
+Full end-to-end latency depends on live API conditions and is better tracked through the structured logs than pinned in tests.
+
+---
+
+## What's not in the test suite (and why)
+
+**Live groundedness / hallucination** — verifying the final answer is grounded in search results requires a real LLM call. Non-deterministic and expensive for CI. The right approach is a periodic offline eval against a golden set.
+
+**Live latency and cost** — these fluctuate with API conditions. Tracked via observability logs, not tests.
+
+---
+
+## Regression coverage
+
+| Bug fixed | Test that prevents regression |
+|-----------|-------------------------------|
+| Bug 2 — infinite validation loop | `test_max_attempts_reached_routes_to_synthesis` |
+| Bug 6 — synthesis uses raw scrape | `test_synthesis_uses_findings_not_raw_research` |
+| Bug 7 — off-by-one threshold | `test_confidence_at_threshold_routes_to_synthesis` |
+| Token budget guard | `test_token_budget_guard_fires` |

@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.llm import get_llm
 from app.state import AgentState
 
@@ -32,6 +33,9 @@ class ClarityVerdict(BaseModel):
 
 def clarity_node(state: AgentState) -> dict:
     user_query = state["messages"][-1].content
+
+    if settings.mock_mode:
+        return {"clarity_status": "clear", "original_query": user_query}
 
     llm = get_llm(temperature=0).with_structured_output(ClarityVerdict)
     verdict: ClarityVerdict = llm.invoke(

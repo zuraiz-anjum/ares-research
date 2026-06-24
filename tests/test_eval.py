@@ -160,6 +160,27 @@ def test_decomposer_keeps_simple_query():
     assert result["sub_queries"][0] == "Stripe company overview"
 
 
+def test_full_graph_runs_in_mock_mode():
+    """Full graph should complete end-to-end with zero external API calls in mock mode."""
+    import os
+    from unittest.mock import patch
+    from langchain_core.messages import HumanMessage
+    from app.graph import build_graph
+
+    with patch.object(settings, "mock_mode", True):
+        g = build_graph()
+        config = {"configurable": {"thread_id": "mock-e2e-test"}}
+        result = g.invoke(
+            {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0},
+            config,
+        )
+
+    assert "messages" in result
+    assert len(result["messages"]) > 0
+    last = result["messages"][-1]
+    assert last.content  # got a non-empty answer
+
+
 def test_mock_search_latency():
     """Mock search should complete near-instantly — no network call."""
     from app.tools.search import tavily_search, MOCK_RESULTS

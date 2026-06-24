@@ -88,15 +88,15 @@
 **Trade-off:** The threshold is defined as "the minimum acceptable confidence." A score equal to the threshold means the research meets the bar and it should not be sent to the validator. Changing the threshold to 7 instead would silently shift the bar rather than fix the semantics. `>=` is the correct implementation of the stated intent.
 
 
-## 9. Mock mode: Tavily only, not LLM
+## 9. Mock mode: full isolation via per-agent hardcoded returns
 
-**Context:** Tests need to run without network calls or API keys.
+**Context:** Tests need to run without any network calls or API keys — not just Tavily, but the LLM too.
 
-**Options:** Mock both Tavily and the LLM, mock Tavily only, use pytest's monkeypatch for individual test cases.
+**Options:** Mock both Tavily and LLM using FakeListChatModel, mock Tavily only, add per-agent mock returns controlled by MOCK_MODE setting.
 
-**Choice:** `MOCK_MODE=true` mocks Tavily via a fake results constant. LLM calls use real Groq in mock mode. Individual tests that need LLM isolation use `unittest.mock.patch` directly.
+**Choice:** When `MOCK_MODE=true`, each agent checks the flag and returns a hardcoded response instead of calling the LLM. Tavily returns a fake result constant. Zero external calls.
 
-**Trade-off:** Mocking the LLM with FakeListChatModel doesn't work cleanly because agents use `.with_structured_output()` which FakeListChatModel doesn't support. Rather than building a custom fake LLM, the test suite focuses on routing functions (which need no LLM) and uses direct patching for the few tests that need to inspect LLM inputs. This is more practical and gives better coverage than a fragile full mock.
+**Trade-off:** FakeListChatModel doesn't support `.with_structured_output()` which all agents use, so it wasn't viable. Per-agent hardcoded returns are simple, reliable, and make the mock contract explicit. The downside is the mock responses are static — they don't adapt to the query. That's acceptable for testing routing and infrastructure; groundedness testing still requires real API calls.
 
 
 ## 10. SqliteSaver instead of MemorySaver for conversation persistence

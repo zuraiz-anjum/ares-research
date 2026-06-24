@@ -10,6 +10,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
+from app.config import settings
 from app.llm import get_llm
 from app.state import AgentState
 
@@ -26,6 +27,9 @@ class ValidationVerdict(BaseModel):
 def validator_node(state: AgentState) -> dict:
     question = state["original_query"]
     findings = state.get("findings", "")
+
+    if settings.mock_mode:
+        return {"validation_result": "sufficient", "attempts": state.get("attempts", 0) + 1}
 
     llm = get_llm(temperature=0).with_structured_output(ValidationVerdict)
     verdict: ValidationVerdict = llm.invoke(

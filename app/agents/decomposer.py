@@ -15,6 +15,7 @@ import logging
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.llm import get_llm
 from app.state import AgentState
 
@@ -48,6 +49,9 @@ def decomposer_node(state: AgentState) -> dict:
     question = state.get("original_query", "")
     clarification = state.get("clarification", "")
     full_question = f"{question} {clarification}".strip() if clarification else question
+
+    if settings.mock_mode:
+        return {"sub_queries": [full_question]}
 
     llm = get_llm(temperature=0).with_structured_output(DecompositionResult)
     result: DecompositionResult = llm.invoke([

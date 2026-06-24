@@ -6,6 +6,7 @@ the user, using the conversation history to stay on-topic across turns.
 
 from langchain_core.messages import AIMessage, SystemMessage
 
+from app.config import settings
 from app.llm import get_llm
 from app.state import AgentState
 
@@ -19,12 +20,13 @@ Research findings:
 
 
 def synthesis_node(state: AgentState) -> dict:
-    research =state.get("findings", "") or state.get("raw_research", "") 
-    history = state["messages"][-10:]  # last 10 messages for context
+    research = state.get("findings", "") or state.get("raw_research", "")
+    history = state["messages"][-10:]
+
+    if settings.mock_mode:
+        return {"messages": [AIMessage(content=f"Mock answer based on: {research[:100]}")]}
 
     system = SYNTHESIS_SYSTEM_PROMPT.format(research=research)
-
     llm = get_llm()
     response = llm.invoke([SystemMessage(content=system), *history])
-
     return {"messages": [AIMessage(content=response.content)]}

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     max_validation_attempts: int = 3
     confidence_threshold: int = 6
     max_token_budget: int = 4000
+    mock_mode: bool = False
 
     # --- Server ---------------------------------------------------------------
     host: str = "0.0.0.0"

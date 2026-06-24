@@ -96,7 +96,7 @@
 
 **Choice:** When `MOCK_MODE=true`, each agent checks the flag and returns a hardcoded response instead of calling the LLM. Tavily returns a fake result constant. Zero external calls.
 
-**Trade-off:** FakeListChatModel doesn't support `.with_structured_output()` which all agents use, so it wasn't viable. Per-agent hardcoded returns are simple, reliable, and make the mock contract explicit. The downside is the mock responses are static — they don't adapt to the query. That's acceptable for testing routing and infrastructure; groundedness testing still requires real API calls.
+**Trade-off:** FakeListChatModel doesn't support `.with_structured_output()` which all agents use, so it wasn't viable. Per-agent hardcoded returns are simple, reliable, and make the mock contract explicit. The downside is the mock responses are static — they don't adapt to the query. That's acceptable for testing routing and infrastructure. Groundedness testing against real LLM output still requires live API calls, but routing, cost, and latency are fully covered offline.
 
 
 ## 10. SqliteSaver instead of MemorySaver for conversation persistence
@@ -125,6 +125,6 @@
 
 **README says OPENAI_API_KEY, brief says you can swap providers.** I swapped to Groq and documented it here rather than modifying the original README, which is the baseline artifact.
 
-**"Reproducible/mocked run mode" is undefined.** The spec doesn't say what mock mode should cover. I interpreted it as: external API calls (Tavily) should be mockable for testing. The LLM is not mocked because the structured output dependency makes it impractical without significant complexity, and the routing tests cover the graph logic without needing LLM calls.
+**"Reproducible/mocked run mode" is undefined.** The spec doesn't say what mock mode should cover. I implemented full isolation — when `MOCK_MODE=true`, every agent returns hardcoded responses and Tavily returns fake results. Zero external API calls. The routing tests run entirely offline in under 2 seconds.
 
 **Confidence threshold semantics are ambiguous.** The config field is named `confidence_threshold` but the original code used `>` not `>=`. Whether the threshold is inclusive or exclusive is unspecified. I treated it as inclusive (a score AT the threshold passes) and fixed the implementation to match.

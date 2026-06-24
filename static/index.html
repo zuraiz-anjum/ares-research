@@ -4,91 +4,323 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Research Assistant</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
-    :root { --bg: #0f1115; --panel: #181b22; --accent: #5b8cff; --text: #e7e9ee; --muted: #9aa1ad; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); }
-    .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; height: 100vh; }
-    h1 { font-size: 18px; font-weight: 600; margin: 0 0 16px; }
-    #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; }
-    .msg { padding: 12px 14px; border-radius: 12px; max-width: 85%; line-height: 1.5; white-space: pre-wrap; }
-    .user { align-self: flex-end; background: var(--accent); color: white; }
-    .bot { align-self: flex-start; background: var(--panel); }
-    .clar { align-self: flex-start; background: #2a2410; border: 1px solid #5c5020; }
-    .row { display: flex; gap: 8px; }
-    input { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2e37; background: var(--panel); color: var(--text); font-size: 15px; }
-    button { padding: 12px 18px; border-radius: 10px; border: none; background: var(--accent); color: white; font-weight: 600; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: default; }
-    .meta { color: var(--muted); font-size: 12px; }
+    :root {
+      --bg: #0d0f12;
+      --surface: #161920;
+      --border: #222630;
+      --accent: #4f7eff;
+      --accent-dim: #1e2d5a;
+      --text: #e2e4ea;
+      --muted: #7a8394;
+      --user-bg: #4f7eff;
+      --clar-bg: #1e1a0e;
+      --clar-border: #4a3f1a;
+      --tag-bg: #1a2240;
+      --tag-text: #7eaaff;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+    }
+
+    .logo {
+      width: 28px; height: 28px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+    }
+
+    header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+    header span { font-size: 12px; color: var(--muted); margin-left: 4px; }
+
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 780px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .msg-wrap { display: flex; flex-direction: column; gap: 6px; }
+    .msg-wrap.user { align-items: flex-end; }
+    .msg-wrap.bot { align-items: flex-start; }
+    .msg-wrap.clar { align-items: flex-start; }
+
+    .msg {
+      padding: 11px 15px;
+      border-radius: 14px;
+      max-width: 78%;
+      line-height: 1.55;
+      font-size: 14.5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .msg.user { background: var(--user-bg); color: white; border-bottom-right-radius: 4px; }
+    .msg.bot { background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .msg.clar { background: var(--clar-bg); border: 1px solid var(--clar-border); color: #d4c87a; border-bottom-left-radius: 4px; }
+    .msg.error { background: #1e0e0e; border: 1px solid #4a1a1a; color: #e07a7a; }
+
+    .msg.bot p { margin: 0 0 10px; }
+    .msg.bot p:last-child { margin-bottom: 0; }
+    .msg.bot strong { color: #c5d3f5; }
+    .msg.bot h1, .msg.bot h2, .msg.bot h3 { font-size: 14px; font-weight: 600; margin: 12px 0 6px; color: #c5d3f5; }
+    .msg.bot ul, .msg.bot ol { padding-left: 18px; margin: 6px 0; }
+    .msg.bot li { margin-bottom: 4px; }
+    .msg.bot code { background: #1e2433; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+
+    .label { font-size: 11px; color: var(--muted); padding: 0 4px; }
+
+    .queries {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 0 4px;
+    }
+
+    .query-tag {
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      font-size: 11.5px;
+      padding: 3px 9px;
+      border-radius: 20px;
+      border: 1px solid #2a3a6a;
+    }
+
+    .queries-label {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 0 4px;
+    }
+
+    .thinking {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dots { display: flex; gap: 4px; }
+    .dots span {
+      width: 5px; height: 5px;
+      background: var(--muted);
+      border-radius: 50%;
+      animation: bounce 1.2s infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40% { transform: translateY(-5px); opacity: 1; }
+    }
+
+    footer {
+      padding: 16px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .input-row {
+      max-width: 780px;
+      margin: 0 auto;
+      display: flex;
+      gap: 8px;
+    }
+
+    input {
+      flex: 1;
+      padding: 11px 15px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--muted); }
+
+    button {
+      padding: 11px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    button:disabled { opacity: 0.45; cursor: default; }
+    button:not(:disabled):hover { opacity: 0.88; }
+
+    #chat::-webkit-scrollbar { width: 5px; }
+    #chat::-webkit-scrollbar-track { background: transparent; }
+    #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Company Research Assistant</h1>
-    <div id="log"></div>
-    <div class="row">
-      <input id="input" placeholder="Ask about a company..." autocomplete="off" />
-      <button id="send">Send</button>
-    </div>
+
+<header>
+  <div class="logo">🔍</div>
+  <h1>Research Assistant</h1>
+  <span>powered by LangGraph</span>
+</header>
+
+<div id="chat"></div>
+
+<footer>
+  <div class="input-row">
+    <input id="input" placeholder="Ask about a company..." autocomplete="off" />
+    <button id="send">Send</button>
   </div>
+</footer>
 
-  <script>
-    const log = document.getElementById("log");
-    const input = document.getElementById("input");
-    const send = document.getElementById("send");
+<script>
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("input");
+  const send = document.getElementById("send");
 
-    let threadId = null;
-    let awaitingClarification = false;
+  let threadId = null;
+  let awaitingClarification = false;
+  let thinkingEl = null;
 
-    function add(text, cls) {
-      const div = document.createElement("div");
-      div.className = "msg " + cls;
-      div.textContent = text;
-      log.appendChild(div);
-      log.scrollTop = log.scrollHeight;
+  function addMessage(text, type, subQueries) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg-wrap " + (type === "user" ? "user" : type === "clar" ? "clar" : "bot");
+
+    if (type === "bot") {
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = "Research Assistant";
+      wrap.appendChild(label);
     }
 
-    async function post(url, body) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    if (type === "clar") {
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = "Clarification needed";
+      wrap.appendChild(label);
+    }
+
+    const msg = document.createElement("div");
+    msg.className = "msg " + type;
+    if (type === "bot") {
+      msg.innerHTML = marked.parse(text);
+    } else {
+      msg.textContent = text;
+    }
+    wrap.appendChild(msg);
+
+    if (subQueries && subQueries.length > 1) {
+      const qlabel = document.createElement("div");
+      qlabel.className = "queries-label";
+      qlabel.textContent = "Searched separately:";
+      wrap.appendChild(qlabel);
+
+      const tags = document.createElement("div");
+      tags.className = "queries";
+      subQueries.forEach(q => {
+        const tag = document.createElement("span");
+        tag.className = "query-tag";
+        tag.textContent = q;
+        tags.appendChild(tag);
       });
-      return res.json();
+      wrap.appendChild(tags);
     }
 
-    function handle(data) {
-      threadId = data.thread_id;
-      if (data.status === "needs_clarification") {
-        awaitingClarification = true;
-        add(data.question, "clar");
-      } else {
-        awaitingClarification = false;
-        add(data.answer, "bot");
-      }
-    }
+    chat.appendChild(wrap);
+    chat.scrollTop = chat.scrollHeight;
+  }
 
-    async function submit() {
-      const text = input.value.trim();
-      if (!text) return;
-      add(text, "user");
-      input.value = "";
-      send.disabled = true;
-      try {
-        const data = awaitingClarification
-          ? await post("/resume", { thread_id: threadId, clarification: text })
-          : await post("/chat", { message: text, thread_id: threadId });
-        handle(data);
-      } catch (e) {
-        add("Something went wrong. Check the server logs.", "bot");
-      } finally {
-        send.disabled = false;
-        input.focus();
-      }
-    }
+  function showThinking() {
+    thinkingEl = document.createElement("div");
+    thinkingEl.className = "thinking";
+    thinkingEl.innerHTML = `<div class="dots"><span></span><span></span><span></span></div> Researching...`;
+    chat.appendChild(thinkingEl);
+    chat.scrollTop = chat.scrollHeight;
+  }
 
-    send.addEventListener("click", submit);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-  </script>
+  function hideThinking() {
+    if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; }
+  }
+
+  async function post(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  function handle(data) {
+    hideThinking();
+    threadId = data.thread_id;
+    if (data.status === "needs_clarification") {
+      awaitingClarification = true;
+      addMessage(data.question, "clar");
+    } else if (data.status === "error") {
+      awaitingClarification = false;
+      addMessage(data.answer, "error");
+    } else {
+      awaitingClarification = false;
+      addMessage(data.answer, "bot", data.sub_queries);
+    }
+  }
+
+  async function submit() {
+    const text = input.value.trim();
+    if (!text) return;
+    addMessage(text, "user");
+    input.value = "";
+    send.disabled = true;
+    showThinking();
+    try {
+      const data = awaitingClarification
+        ? await post("/resume", { thread_id: threadId, clarification: text })
+        : await post("/chat", { message: text, thread_id: threadId });
+      handle(data);
+    } catch (e) {
+      hideThinking();
+      addMessage("Something went wrong. Check the server logs.", "error");
+    } finally {
+      send.disabled = false;
+      input.focus();
+    }
+  }
+
+  send.addEventListener("click", submit);
+  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+</script>
 </body>
 </html>

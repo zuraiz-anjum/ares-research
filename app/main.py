@@ -59,8 +59,9 @@ def _run(inputs: dict | Command, thread_id: str) -> dict:
         return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
 
     answer = result["messages"][-1].content
+    sub_queries = result.get("sub_queries", [])
     logger.info(f"request_complete thread={thread_id}")
-    return {"status": "complete", "answer": answer, "thread_id": thread_id}
+    return {"status": "complete", "answer": answer, "thread_id": thread_id, "sub_queries": sub_queries}
 
 
 @app.post("/chat")

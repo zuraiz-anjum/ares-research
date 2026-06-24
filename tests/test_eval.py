@@ -177,6 +177,7 @@ def test_decomposer_splits_compound_query():
     mock_result = MagicMock()
     mock_result.queries = ["Stripe recent funding", "OpenAI recent funding"]
     mock_result.is_compound = True
+    mock_result.has_dependencies = False  # explicitly set — MagicMock defaults are truthy
 
     with patch("app.agents.decomposer.get_llm") as mock_llm:
         mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
@@ -187,20 +188,30 @@ def test_decomposer_splits_compound_query():
 
 
 def test_decomposer_keeps_simple_query():
-    """Simple query should produce a single sub-query."""
+    """Simple query hits the fast path and returns the original question without an LLM call."""
+    from app.agents.decomposer import decomposer_node
+
+    result = decomposer_node({"original_query": "Tell me about Stripe"})
+
+    assert len(result["sub_queries"]) == 1
+    assert result["sub_queries"][0] == "Tell me about Stripe"
+
+
+def test_decomposer_collapses_dependent_query():
+    """Query with sequential dependencies should collapse to single query."""
     from unittest.mock import patch, MagicMock
     from app.agents.decomposer import decomposer_node
 
     mock_result = MagicMock()
-    mock_result.queries = ["Stripe company overview"]
-    mock_result.is_compound = False
+    mock_result.queries = ["Stripe funding round", "what happened after"]
+    mock_result.is_compound = True
+    mock_result.has_dependencies = True
 
     with patch("app.agents.decomposer.get_llm") as mock_llm:
         mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
-        result = decomposer_node({"original_query": "Tell me about Stripe"})
+        result = decomposer_node({"original_query": "Compare Stripe and what they did after funding"})
 
     assert len(result["sub_queries"]) == 1
-    assert result["sub_queries"][0] == "Stripe company overview"
 
 
 def test_full_graph_runs_in_mock_mode():

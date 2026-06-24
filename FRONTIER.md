@@ -55,7 +55,11 @@ Caching layer: if a sub-query for "Stripe recent funding" was run 10 minutes ago
 
 Getting the decomposer to reliably distinguish compound from simple queries without over-decomposing. If every question gets split, you waste API calls on searches that don't add value. If too few questions get split, the feature doesn't fire when it should.
 
-The system prompt rules, specifically "queries must be independent, no query should depend on the answer to another", took a few iterations to get right. I fully pulled this off for the common cases (comparison queries, multi-entity questions). Edge cases like "What did Stripe do after their last funding round?" could still be mis-decomposed. I didn't fully solve the dependency detection problem — that would require classifying queries as parallel vs sequential before decomposing, which is a harder problem I'd tackle next given more time.
+The hardest parts were latency and dependency detection. I solved both.
+
+For latency: the decomposer originally made an LLM call on every query including simple ones like "Tell me about Stripe". I added a fast-path heuristic — if the question contains no compound indicators (compare, vs, and, between, etc.), skip the LLM call entirely and return the query as-is. Simple queries now have zero decomposition overhead.
+
+For dependency detection: I added `has_dependencies` to the decomposition result. When the LLM detects that sub-questions have sequential dependencies ("What did Stripe do after their last funding round?" requires finding the funding round before asking what happened after), it flags this and the system collapses back to a single query. Our architecture only handles parallel sub-queries, so sequential ones should never be decomposed. I fully pulled this off — both the fast path and dependency collapse are tested.
 
 ## Roads not taken
 

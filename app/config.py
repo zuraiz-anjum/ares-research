@@ -11,11 +11,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- Provider credentials -------------------------------------------------
-    openai_api_key: str = ""
+    groq_api_key: str = ""
     tavily_api_key: str = ""
 
     # --- Model selection ------------------------------------------------------
-    llm_model: str = "gpt-4o-mini"
+    llm_model: str = "llama-3.3-70b-versatile"
     llm_temperature: float = 0.2
 
     # --- Research behaviour ---------------------------------------------------
@@ -30,5 +30,4 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Handy for spotting misconfiguration during local development.
-print(f"[config] settings loaded: {settings.model_dump()}")
+

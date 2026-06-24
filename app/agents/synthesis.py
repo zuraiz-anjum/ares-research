@@ -20,7 +20,7 @@ Research findings:
 
 def synthesis_node(state: AgentState) -> dict:
     research =state.get("findings", "") or state.get("raw_research", "") 
-    history = state["messages"]
+    history = state["messages"][-10:]  # last 10 messages for context
 
     system = SYNTHESIS_SYSTEM_PROMPT.format(research=research)
 

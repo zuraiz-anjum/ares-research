@@ -20,6 +20,12 @@ from pydantic import BaseModel
 from app.config import settings
 from app.graph import graph
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Multi-Agent Research Assistant")
 
 
@@ -35,23 +41,25 @@ class ResumeRequest(BaseModel):
 
 def _run(inputs: dict | Command, thread_id: str) -> dict:
     config = {"configurable": {"thread_id": thread_id}}
-     # Token budget guard
+
     if isinstance(inputs, dict):
         messages = inputs.get("messages", [])
         total_tokens = sum(len(m.content) for m in messages) // 4
         if total_tokens > settings.max_token_budget:
-            logging.warning(f"Token budget exceeded: {total_tokens} tokens estimated")
+            logger.warning(f"token_budget_exceeded thread={thread_id} estimated_tokens={total_tokens}")
             return {"status": "error", "answer": "Your query is too large to process. Please shorten your message.", "thread_id": thread_id}
-        
+        logger.info(f"chat_request thread={thread_id} estimated_tokens={total_tokens}")
+
     result = graph.invoke(inputs, config)
 
-    # If the clarity agent paused for input, surface its question.
     if isinstance(result, dict) and result.get("__interrupt__"):
         interrupt = result["__interrupt__"][0]
         question = interrupt.value.get("question", "Could you clarify your request?")
+        logger.info(f"clarification_needed thread={thread_id}")
         return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
 
     answer = result["messages"][-1].content
+    logger.info(f"request_complete thread={thread_id}")
     return {"status": "complete", "answer": answer, "thread_id": thread_id}
 
 

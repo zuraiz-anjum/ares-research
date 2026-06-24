@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 from pydantic import BaseModel
 
 from app.config import settings
@@ -55,8 +56,8 @@ def chat(req: ChatRequest) -> dict:
 @app.post("/resume")
 def resume(req: ResumeRequest) -> dict:
     # Continue the conversation now that the user has clarified.
-    inputs = {"messages": [HumanMessage(content=req.clarification)], "attempts": 0}
-    return _run(inputs, req.thread_id)
+    
+    return _run(Command(resume=req.clarification),req.thread_id)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

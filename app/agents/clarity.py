@@ -42,6 +42,6 @@ def clarity_node(state: AgentState) -> dict:
         # Pause the graph and surface the question to the user. Execution
         # resumes here once the user replies with a clarification.
         answer = interrupt({"question": verdict.question})
-        return {"clarity_status": "clear", "clarification": answer}
+        return {"clarity_status": "clear", "clarification": answer, "original_query": user_query}
 
-    return {"clarity_status": "clear"}
+    return {"clarity_status": "clear", "original_query": user_query}

@@ -24,7 +24,7 @@ class ValidationVerdict(BaseModel):
 
 
 def validator_node(state: AgentState) -> dict:
-    question = state["messages"][-1].content
+    question = state["original_query"]
     findings = state.get("findings", "")
 
     llm = get_llm(temperature=0).with_structured_output(ValidationVerdict)
@@ -35,10 +35,8 @@ def validator_node(state: AgentState) -> dict:
         ]
     )
 
-    # Record that we've used another research attempt.
     return {
-    "validation_result": verdict.validation_result,
-    "attempts": state.get("attempts", 0) + 1,
-}
+        "validation_result": verdict.validation_result,
+        "attempts": state.get("attempts", 0) + 1,
+    }
 
-    

@@ -28,7 +28,7 @@ class ResearchResult(BaseModel):
 
 def _build_query(state: AgentState) -> str:
     """Construct the search query from the user's question (and any clarification)."""
-    question = state["messages"][-1].content
+    question = state["original_query"]
     clarification = state.get("clarification")
     if clarification:
         return f"{question} {clarification}"

@@ -26,3 +26,5 @@ class AgentState(TypedDict, total=False):
     # Validator agent output.
     validation_result: str         # "sufficient" | "insufficient"
     attempts: int                  # number of research attempts so far
+
+    original_query: str

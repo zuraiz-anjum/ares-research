@@ -54,3 +54,17 @@ def resume(req: ResumeRequest) -> dict:
 ```
 
 **Prevention:** Any `interrupt()` call inside a node must have a matching `Command(resume=...)` on the caller side. Never try to resume an interrupted thread by passing a regular state dict — LangGraph won't know the difference and will restart from scratch.
+
+---
+
+## Bug 4 & 5 — Research and validator work on the wrong question after clarification
+
+**Location:** `app/agents/research.py:31`, `app/agents/validator.py:27`
+
+**Symptom:** After the clarification flow, the system silently runs research on the wrong query. Instead of the user's actual question, it searches something like `"Stripe Stripe"`,the clarification answer duplicated. No error is thrown, the user just gets a bad or irrelevant answer.
+
+**Root cause:** Both agents were reading `state["messages"][-1].content` to get the user's question. That works fine on a direct query where the last message is the question. But after clarification, the messages list has grown,the last message is now the user's clarification answer (e.g. `"Stripe"`), not the original question. Since `state["clarification"]` also holds `"Stripe"`, the final query ends up as `"Stripe Stripe"`.
+
+**Fix:** Added `original_query: str` to `AgentState` and populated it in the clarity node before the interrupt fires. Both research and validator now read from `state["original_query"]` which is set once per turn and never changes regardless of how many messages get added after it.
+
+**Prevention:** In a multi-turn system, never rely on `messages[-1]` to recover the current question ,that index shifts as the conversation grows. Store the original query in a dedicated state field at the start of each turn.

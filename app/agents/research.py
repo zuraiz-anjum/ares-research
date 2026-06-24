@@ -5,6 +5,7 @@ Tavily search tool, summarises the findings, and rates its own confidence in
 how well the findings answer the user's question.
 """
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 from app.llm import get_llm
 from app.state import AgentState
 from app.tools.search import tavily_search
+
+logger = logging.getLogger(__name__)
 
 RESEARCH_SYSTEM_PROMPT = """You are the Research Agent in a company-research assistant.
 You are given raw web search results about a company. Extract the relevant facts
@@ -53,6 +56,9 @@ def research_node(state: AgentState) -> dict:
     all_raw = [r[0] for r in fetch_results]
     result_counts = [r[1] for r in fetch_results]
     raw_research = "\n\n".join(all_raw)
+
+    for q, count in zip(queries, result_counts):
+        logger.info(f"search query={repr(q)} results={count}")
 
     llm = get_llm().with_structured_output(ResearchResult)
     result: ResearchResult = llm.invoke(

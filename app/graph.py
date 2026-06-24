@@ -26,7 +26,7 @@ from app.state import AgentState
 
 def route_after_research(state: AgentState) -> str:
     """High-confidence research goes straight to synthesis; otherwise validate."""
-    if state["confidence_score"] > settings.confidence_threshold:
+    if state["confidence_score"] >= settings.confidence_threshold:
         return "synthesis"
     return "validator"
 

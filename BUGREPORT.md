@@ -85,3 +85,21 @@ research = state.get("findings", "") or state.get("raw_research", "")
 ```
 
 **Prevention:** When chaining fallbacks with `or`, always put the preferred value first. Raw external content should never be the default ,always prefer the processed, trusted version.
+
+---
+
+## Bug 7 — Off-by-one on confidence routing threshold
+
+**Location:** `app/graph.py:29`
+
+**Symptom:** Research with a confidence score exactly equal to the threshold (default: 6) gets sent to the validator unnecessarily, causing an extra validation pass even when the research is good enough.
+
+**Root cause:** The condition used `>` instead of `>=`. Think of it like a passing grade — if 6 is the cutoff, a score of exactly 6 should pass. With `>`, a score of 6 fails the check and gets routed to the validator, even though 6 is supposed to mean "good enough."
+
+**Fix:** Changed `>` to `>=`:
+```python
+if state["confidence_score"] >= settings.confidence_threshold:
+    return "synthesis"
+```
+
+**Prevention:** When defining thresholds, always be explicit about whether the boundary is inclusive or exclusive. Write a boundary-case test for the exact threshold value so this kind of off-by-one doesn't slip through.

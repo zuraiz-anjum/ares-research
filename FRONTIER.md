@@ -55,7 +55,7 @@ Caching layer: if a sub-query for "Stripe recent funding" was run 10 minutes ago
 
 Getting the decomposer to reliably distinguish compound from simple queries without over-decomposing. If every question gets split, you waste API calls on searches that don't add value. If too few questions get split, the feature doesn't fire when it should.
 
-The system prompt rules, specifically "queries must be independent, no query should depend on the answer to another", took a few iterations to get right. I fully pulled this off for the common cases (comparison queries, multi-entity questions). Edge cases like "What did Stripe do after their last funding round?" could still be mis-decomposed.
+The system prompt rules, specifically "queries must be independent, no query should depend on the answer to another", took a few iterations to get right. I fully pulled this off for the common cases (comparison queries, multi-entity questions). Edge cases like "What did Stripe do after their last funding round?" could still be mis-decomposed. I didn't fully solve the dependency detection problem — that would require classifying queries as parallel vs sequential before decomposing, which is a harder problem I'd tackle next given more time.
 
 ## Roads not taken
 

@@ -10,10 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from app.config import truncate_to_budget
+from app.config import settings, truncate_to_budget
 from app.llm import get_llm
 from app.state import AgentState
-from app.tools.search import tavily_search
+from app.tools.search import MOCK_RESULTS, tavily_search
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,13 @@ def _get_queries(state: AgentState) -> list[str]:
 def research_node(state: AgentState) -> dict:
     queries = _get_queries(state)
     original_question = state.get("original_query", queries[0])
+
+    if settings.mock_mode:
+        return {
+            "findings": "Mock findings: The company has strong revenue growth of 30% YoY. Recent $500M funding round at $10B valuation. Leadership team expanded with three C-suite hires.",
+            "raw_research": MOCK_RESULTS[0]["content"],
+            "confidence_score": 8,
+        }
 
     # Run all sub-queries in parallel — no sequential dependency between them.
     def fetch(query: str) -> tuple[str, int]:

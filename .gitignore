@@ -7,3 +7,5 @@ venv/
 *.egg-info/
 .DS_Store
 checkpoints.db
+checkpoints.db-shm
+checkpoints.db-wal

@@ -43,7 +43,7 @@ Compare Stripe and OpenAI's recent funding
 python -m pytest tests/ -v
 ```
 
-24 tests, under 1 second, no API keys needed.
+29 tests, under 10 seconds, no API keys needed.
 
 ## What to expect
 
@@ -61,3 +61,12 @@ MOCK_MODE=true
 ```
 
 In mock mode the full graph runs end-to-end with no network calls. Useful for CI or offline testing.
+
+## Run with Docker
+
+```bash
+docker build -t research-assistant .
+docker run -p 8000:8000 --env-file .env research-assistant
+```
+
+Open http://localhost:8000 and ask about a company.

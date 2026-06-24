@@ -110,7 +110,18 @@
 **Trade-off:** SqliteSaver requires no external service — SQLite is built into Python. Conversations now survive server restarts and deployments. The downside is that the SQLite file grows indefinitely without a cleanup strategy, and SQLite has limited concurrency under high load. For a production system with real traffic, Postgres would be the right choice. For this project, SQLite is the right balance between persistence and simplicity.
 
 
-## 11. Spec ambiguities I noticed
+## 11. Rate limiting: 20 requests per minute per IP
+
+**Context:** The API has no protection against a single client hammering it with requests, which would burn through API quota and degrade performance for other users.
+
+**Options:** No rate limiting, slowapi (per-IP), API key authentication, queue-based throttling.
+
+**Choice:** slowapi with a 20 requests/minute limit per IP on `/chat` and `/resume`.
+
+**Trade-off:** 20/min is generous for a research assistant — a real user typing questions won't hit it. It protects against accidental loops and basic abuse without adding authentication complexity. The limit is applied per IP which breaks in shared NAT environments (all users behind one IP share the limit), but that's acceptable for this scale.
+
+
+## 12. Spec ambiguities I noticed
 
 **README says OPENAI_API_KEY, brief says you can swap providers.** I swapped to Groq and documented it here rather than modifying the original README, which is the baseline artifact.
 

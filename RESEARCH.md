@@ -20,7 +20,12 @@ Self-Ask is similar but adds web search into the loop. The model asks itself fol
 
 **Citation:** Press, O., Zhang, M., Min, S., Schmidt, L., Smith, N. A., & Lewis, M. (2022). *Measuring and Narrowing the Compositionality Gap in Language Models.* Findings of EMNLP 2023. ACL Anthology. https://aclanthology.org/2023.findings-emnlp.378
 
-### 3. LangChain MultiQueryRetriever
+### 3. Demonstrate-Search-Predict — Khattab et al. (2022)
+This paper proposes composing retrieval and LLMs for knowledge-intensive tasks. The key idea is a pipeline where you demonstrate what good retrieval looks like, search using that context, then predict the answer. It's one of the more direct pieces of work on multi-step retrieval with LLMs and it shows the same sequential assumption — each retrieval step builds on the last.
+
+**Citation:** Khattab, O., Santhanam, K., Li, X. L., Hall, D., Liang, P., Potts, C., & Zaharia, M. (2022). *Demonstrate-Search-Predict: Composing Retrieval and Language Models for Knowledge-Intensive NLP.* arXiv preprint arXiv:2212.14024. https://arxiv.org/pdf/2212.14024
+
+### 4. LangChain MultiQueryRetriever
 LangChain built a production component that generates multiple query phrasings from a single user question and retrieves results for all of them. The idea is that one phrasing might miss documents that a different phrasing would catch. It generates the queries upfront rather than sequentially.
 
 **Citation:** LangChain. *MultiQueryRetriever.* LangChain Reference Documentation. https://reference.langchain.com/python/langchain-classic/retrievers/multi_query/MultiQueryRetriever. Accessed June 2026.
@@ -29,7 +34,7 @@ LangChain built a production component that generates multiple query phrasings f
 
 ## What I agree with
 
-All three sources agree on the same fundamental point, one query is not always enough for a complex question. You get better results when you break things down. I saw this myself while testing, so the research lines up with what I observed.
+All four sources agree on the same fundamental point, one query is not always enough for a complex question. You get better results when you break things down. I saw this myself while testing, so the research lines up with what I observed.
 
 I also think LangChain's decision to generate all queries upfront (rather than one at a time) is the right call. It's cleaner and faster.
 
@@ -37,7 +42,7 @@ I also think LangChain's decision to generate all queries upfront (rather than o
 
 ## What I disagree with
 
-Both Least-to-Most and Self-Ask assume you have to solve sub-problems **in order** , the answer to question 1 determines what question 2 even is. That makes sense for pure reasoning tasks where there's a dependency chain.
+Least-to-Most, Self-Ask, and Demonstrate-Search-Predict all assume you have to solve sub-problems **in order** , the answer to question 1 determines what question 2 even is. That makes sense for pure reasoning tasks where there's a dependency chain.
 
 But that's not how company research questions work. "Compare Stripe and Brex's funding" breaks into:
 - "Stripe recent funding"

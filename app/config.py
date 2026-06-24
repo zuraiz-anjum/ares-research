@@ -6,7 +6,6 @@ development). See `.env.example` for the full list of supported variables.
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -22,6 +21,7 @@ class Settings(BaseSettings):
     max_search_results: int = 5
     max_validation_attempts: int = 3
     confidence_threshold: int = 6
+    max_token_budget: int = 4000
 
     # --- Server ---------------------------------------------------------------
     host: str = "0.0.0.0"

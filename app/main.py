@@ -7,6 +7,7 @@ Exposes a small JSON API plus a static chat UI:
   GET  /        -> the chat UI
 """
 
+import logging
 import uuid
 
 from fastapi import FastAPI
@@ -32,8 +33,16 @@ class ResumeRequest(BaseModel):
     clarification: str
 
 
-def _run(inputs: dict, thread_id: str) -> dict:
+def _run(inputs: dict | Command, thread_id: str) -> dict:
     config = {"configurable": {"thread_id": thread_id}}
+     # Token budget guard
+    if isinstance(inputs, dict):
+        messages = inputs.get("messages", [])
+        total_tokens = sum(len(m.content) for m in messages) // 4
+        if total_tokens > settings.max_token_budget:
+            logging.warning(f"Token budget exceeded: {total_tokens} tokens estimated")
+            return {"status": "error", "answer": "Your query is too large to process. Please shorten your message.", "thread_id": thread_id}
+        
     result = graph.invoke(inputs, config)
 
     # If the clarity agent paused for input, surface its question.

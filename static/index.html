@@ -368,6 +368,81 @@
       transform: translateY(-1px);
     }
 
+    /* ── Fact check section ──────────────────── */
+    .fact-check-section {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin: 4px 0;
+    }
+
+    .fact-check-label {
+      font-size: 10.5px; font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.6px; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .fact-check-items { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 5px; }
+
+    .fact-item {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 12px; padding: 3px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .fact-item:last-child { border-bottom: none; }
+
+    .fact-icon { font-size: 12px; flex-shrink: 0; }
+    .fact-item.verified   .fact-icon { color: #2ea06a; }
+    .fact-item.uncertain  .fact-icon { color: #c9b86a; }
+    .fact-item.contradicted .fact-icon { color: #c97070; }
+
+    .fact-claim { color: var(--text); flex: 1; }
+    .fact-note  { color: var(--text-muted); font-size: 11px; flex: 0 0 auto; text-align: right; max-width: 45%; }
+
+    /* ── Plan section ────────────────────────── */
+    .plan-section {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-left: 3px solid var(--accent2);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+    }
+
+    .plan-label {
+      font-size: 10.5px; font-weight: 600;
+      color: var(--accent2);
+      letter-spacing: 0.6px; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .plan-steps { list-style: none; counter-reset: plan-counter; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 5px; }
+
+    .plan-step {
+      display: flex; align-items: baseline; gap: 10px;
+      font-size: 12.5px; color: var(--text-dim); padding: 2px 0;
+      counter-increment: plan-counter;
+    }
+
+    .plan-step::before {
+      content: counter(plan-counter);
+      flex-shrink: 0;
+      width: 18px; height: 18px;
+      background: var(--accent2);
+      color: #fff;
+      border-radius: 50%;
+      font-size: 10px; font-weight: 600;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* ── Debate mode bubble ───────────────────── */
+    .msg.bot.debate-mode h2:nth-of-type(1) { color: #2ea06a; }
+    .msg.bot.debate-mode h2:nth-of-type(2) { color: #c97070; }
+    .msg.bot.debate-mode h2:nth-of-type(3) { color: #c9b86a; }
+
     /* ── Code blocks (Prism overrides) ──────── */
     .msg.bot pre {
       margin: 10px 0;
@@ -565,10 +640,10 @@
       <h2>AI Workspace</h2>
       <p>Research companies, compare competitors, and get structured answers — powered by a multi-agent pipeline running in parallel.</p>
       <div class="chips">
-        <button class="chip" onclick="fill(this)">Compare Stripe and Brex's funding</button>
+        <button class="chip" onclick="fill(this)">Pros and cons of investing in Stripe right now</button>
         <button class="chip" onclick="fill(this)">Write a report on Anthropic</button>
         <button class="chip" onclick="fill(this)">Write a binary search in Python</button>
-        <button class="chip" onclick="fill(this)">Compare the revenue numbers for OpenAI vs Mistral</button>
+        <button class="chip" onclick="fill(this)">Create a plan to learn LangGraph in 30 days</button>
       </div>
     </div>
   </div>
@@ -593,9 +668,11 @@
 
   // Pipeline configs per mode — defines which nodes appear and in what order.
   const PIPELINE_CONFIGS = {
-    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "critic", "suggestions"],
+    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
     data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "suggestions"],
+    debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
+    plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
     document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
     code:          ["clarity", "intent_router", "code_writer", "suggestions"],
@@ -606,10 +683,11 @@
     research: "Research", synthesis: "Synthesis", critic: "Critique",
     report_writer: "Report", doc_agent: "Document", validator: "Validate",
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
+    debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
   };
 
   // Streaming nodes — the ones whose LLM tokens go into the main bubble.
-  const STREAMING_NODES = new Set(["synthesis", "report_writer", "data_analyst", "code_writer"]);
+  const STREAMING_NODES = new Set(["synthesis", "report_writer", "data_analyst", "code_writer", "debate_writer"]);
 
   let threadId = null;
   let awaitingClarification = false;
@@ -661,8 +739,12 @@
 
     const badge = document.createElement("span");
     badge.id = "mode-badge";
-    badge.className = `mode-badge ${mode.startsWith("data") || mode === "code" || mode === "report" ? "research" : mode}`;
-    const modeText = { research: "RESEARCH", report: "REPORT", data_analysis: "DATA", chat: "CHAT", document: "DOC", code: "CODE" };
+    const badgeClass = { chat: "chat", document: "document" }[mode] || "research";
+    badge.className = `mode-badge ${badgeClass}`;
+    const modeText = {
+      research: "RESEARCH", report: "REPORT", data_analysis: "DATA",
+      debate: "DEBATE", plan: "PLAN", chat: "CHAT", document: "DOC", code: "CODE",
+    };
     badge.textContent = modeText[mode] || mode.toUpperCase();
     pipelineEl.appendChild(badge);
   }
@@ -715,6 +797,7 @@
     const labels = {
       report: "Research Report", document: "Document Analysis",
       data_analysis: "Data Analysis", code: "Code", chat: "Assistant",
+      debate: "Debate Analysis", plan: "Research Plan",
     };
     return labels[mode] || "Assistant";
   }
@@ -757,7 +840,8 @@
     lbl.className = "msg-label";
     lbl.textContent = _modeLabel(currentMode);
     const msg = document.createElement("div");
-    msg.className = "msg bot streaming-cursor";
+    const debateClass = currentMode === "debate" ? " debate-mode" : "";
+    msg.className = `msg bot streaming-cursor${debateClass}`;
     g.appendChild(lbl);
     g.appendChild(msg);
     inner.appendChild(g);
@@ -793,6 +877,59 @@
     a.rel = "noopener noreferrer";
     a.textContent = url;
     group.appendChild(a);
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function appendFactCheck(group, results) {
+    if (!results || results.length === 0) return;
+    const section = document.createElement("div");
+    section.className = "fact-check-section";
+    const lbl = document.createElement("div");
+    lbl.className = "fact-check-label";
+    lbl.textContent = "Fact Check";
+    const ul = document.createElement("ul");
+    ul.className = "fact-check-items";
+    const icons = { verified: "✓", uncertain: "⚠", contradicted: "✗" };
+    results.forEach(r => {
+      const li = document.createElement("li");
+      li.className = `fact-item ${r.status}`;
+      li.innerHTML = `<span class="fact-icon">${icons[r.status] || "?"}</span><span class="fact-claim">${escapeHtml(r.claim)}</span><span class="fact-note">${escapeHtml(r.note || "")}</span>`;
+      ul.appendChild(li);
+    });
+    section.appendChild(lbl);
+    section.appendChild(ul);
+    group.appendChild(section);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  // pendingPlan holds steps from plan_revealed until the streaming bubble is created.
+  let pendingPlan = null;
+
+  function appendPlan(group, steps) {
+    if (!steps || steps.length === 0) return;
+    const section = document.createElement("div");
+    section.className = "plan-section";
+    const lbl = document.createElement("div");
+    lbl.className = "plan-label";
+    lbl.textContent = "Research Plan";
+    const ol = document.createElement("ol");
+    ol.className = "plan-steps";
+    steps.forEach(s => {
+      const li = document.createElement("li");
+      li.className = "plan-step";
+      li.textContent = s;
+      ol.appendChild(li);
+    });
+    section.appendChild(lbl);
+    section.appendChild(ol);
+    // Insert before the first .msg.bot bubble if present, else append.
+    const bubble = group.querySelector(".msg.bot");
+    if (bubble) group.insertBefore(section, bubble);
+    else group.appendChild(section);
+    chatEl.scrollTop = chatEl.scrollHeight;
   }
 
   function appendSuggestions(group, questions) {
@@ -890,17 +1027,24 @@
           const labels = {
             clarity:       "Checking your question...",
             intent_router: "Routing to the right pipeline...",
+            planner:       "Creating a research plan...",
             decomposer:    "Breaking down your question...",
             research:      "Researching...",
             validator:     "Validating findings...",
             doc_agent:     "Fetching document...",
+            fact_checker:  "Fact-checking claims...",
             data_analyst:  null,  // streaming node — creates bubble below
+            debate_writer: null,  // streaming node
             suggestions:   null,  // fast, silent
           };
           if (STREAMING_NODES.has(data.node)) {
             // synthesis or report_writer — create the streaming bubble now.
             hideTyping();
             ({ group: botGroup, bubble: botBubble } = createBotGroup());
+            if (pendingPlan) {
+              appendPlan(botGroup, pendingPlan);
+              pendingPlan = null;
+            }
             if (pendingSubQueries) {
               appendSubQueries(botGroup, pendingSubQueries);
               pendingSubQueries = null;
@@ -951,6 +1095,21 @@
           break;
         }
 
+        case "plan_revealed": {
+          pendingPlan = data.steps;
+          // If the bot group already exists (e.g. fast response), insert immediately.
+          if (botGroup && data.steps?.length) {
+            appendPlan(botGroup, data.steps);
+            pendingPlan = null;
+          }
+          break;
+        }
+
+        case "fact_check": {
+          if (botGroup && data.results?.length) appendFactCheck(botGroup, data.results);
+          break;
+        }
+
         case "complete": {
           threadId = data.thread_id;
           awaitingClarification = false;
@@ -967,13 +1126,18 @@
               appendCritique(botGroup, data.critique);
             }
             botGroup.querySelector(".critique-spinner")?.remove();
-            // Fallback: suggestions via complete payload if event was missed.
+            // Fallbacks for events that may have been missed.
+            if (data.fact_check_results?.length && !botGroup.querySelector(".fact-check-section")) {
+              appendFactCheck(botGroup, data.fact_check_results);
+            }
             if (data.suggestions?.length && !botGroup.querySelector(".followup-wrap")) {
               appendSuggestions(botGroup, data.suggestions);
             }
           } else {
             const { group } = addMsg(data.answer || "(no answer)", "bot", data.sub_queries);
+            if (data.plan_steps?.length) appendPlan(group, data.plan_steps);
             if (data.source_url) appendSourceUrl(group, data.source_url);
+            if (data.fact_check_results?.length) appendFactCheck(group, data.fact_check_results);
             if (data.critique) appendCritique(group, data.critique);
             if (data.suggestions?.length) appendSuggestions(group, data.suggestions);
           }

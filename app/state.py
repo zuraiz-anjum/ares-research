@@ -43,3 +43,9 @@ class AgentState(TypedDict, total=False):
 
     # Suggestions agent output.
     suggestions: list[str]
+
+    # Fact Checker agent output.
+    fact_check_results: list          # list[{"claim": str, "status": str, "note": str}]
+
+    # Planner agent output.
+    plan_steps: list[str]

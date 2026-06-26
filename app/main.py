@@ -126,11 +126,11 @@ async def resume(request: Request, req: ResumeRequest) -> dict:
 
 # Graph nodes we want to surface as pipeline-step events in the SSE stream.
 _GRAPH_NODES = {
-    "clarity", "intent_router", "decomposer", "research", "validator",
-    "doc_agent", "data_analyst", "synthesis", "report_writer", "code_writer",
-    "critic", "suggestions",
+    "clarity", "intent_router", "planner", "decomposer", "research", "validator",
+    "doc_agent", "data_analyst", "debate_writer", "synthesis", "report_writer",
+    "code_writer", "fact_checker", "critic", "suggestions",
 }
-_STREAMING_NODES = {"synthesis", "report_writer", "data_analyst", "code_writer"}
+_STREAMING_NODES = {"synthesis", "report_writer", "data_analyst", "code_writer", "debate_writer"}
 
 
 @app.get("/chat/stream")
@@ -172,6 +172,8 @@ async def chat_stream(
         sub_queries: list[str] = []
         critique = ""
         suggestions: list[str] = []
+        fact_check_results: list = []
+        plan_steps: list[str] = []
         final_output: dict = {}
 
         try:
@@ -201,6 +203,16 @@ async def chat_stream(
                         critique = out.get("critique", "")
                         if critique:
                             yield sse({"type": "critique", "content": critique})
+                    elif name == "planner" and node == "planner":
+                        out = event.get("data", {}).get("output", {})
+                        plan_steps = out.get("plan_steps", [])
+                        if plan_steps:
+                            yield sse({"type": "plan_revealed", "steps": plan_steps})
+                    elif name == "fact_checker" and node == "fact_checker":
+                        out = event.get("data", {}).get("output", {})
+                        fact_check_results = out.get("fact_check_results", [])
+                        if fact_check_results:
+                            yield sse({"type": "fact_check", "results": fact_check_results})
                     elif name == "suggestions" and node == "suggestions":
                         out = event.get("data", {}).get("output", {})
                         suggestions = out.get("suggestions", [])
@@ -242,7 +254,17 @@ async def chat_stream(
 
         source_url = final_output.get("source_url", "")
         logger.info(f"stream_complete thread={_thread_id}")
-        yield sse({"type": "complete", "answer": full_answer, "thread_id": _thread_id, "sub_queries": sub_queries, "critique": critique, "source_url": source_url, "suggestions": suggestions})
+        yield sse({
+            "type": "complete",
+            "answer": full_answer,
+            "thread_id": _thread_id,
+            "sub_queries": sub_queries,
+            "critique": critique,
+            "source_url": source_url,
+            "suggestions": suggestions,
+            "fact_check_results": fact_check_results,
+            "plan_steps": plan_steps,
+        })
 
     return StreamingResponse(
         generate(),

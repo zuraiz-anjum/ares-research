@@ -5,9 +5,11 @@ confirms the question is actionable.
 
 Modes
 -----
-research      Company/market research — conversational answer + critique.
+research      Company/market research — conversational answer + fact-check + critique.
 report        Same research pipeline but formatted as a structured multi-section report.
 data_analysis Research for numerical comparison — outputs tables + key metrics.
+debate        Research + structured FOR vs AGAINST analysis with a verdict.
+plan          Complex multi-step task — Planner creates a visible research plan first.
 chat          Answered from model knowledge, no web search needed.
 document      User supplied a URL; fetch and analyse that document.
 code          Write, debug, or explain code — no web search needed.
@@ -58,6 +60,20 @@ _RESEARCH_SIGNALS = {
     "recent news", "latest news",
 }
 
+_DEBATE_SIGNALS = {
+    "pros and cons", "advantages and disadvantages", "should i",
+    "steelman", "debate", "argument for", "argument against",
+    "is it worth", "worth it", "for and against", "pros vs cons",
+    "make the case", "best option", "which is better",
+}
+
+_PLAN_SIGNALS = {
+    "step by step plan", "create a plan", "make a plan", "plan for",
+    "strategy for", "roadmap for", "how to approach", "help me figure out",
+    "what steps", "plan my", "plan to build", "plan to launch",
+    "action plan", "how do i achieve", "how do i get",
+}
+
 ROUTER_SYSTEM_PROMPT = """You are the Intent Router in an AI workspace.
 Classify the user's request into exactly one mode.
 
@@ -70,6 +86,13 @@ report        — same as research but the user explicitly wants a formatted,
 data_analysis — same as research but the user wants numbers, metrics, tables,
                 or statistical comparisons (e.g. "compare the numbers for X and Y").
 
+debate        — the user wants a balanced FOR vs AGAINST analysis of a topic,
+                decision, or comparison (e.g. "pros and cons", "should I", "steelman").
+
+plan          — the user has a complex multi-step task or goal and needs an
+                explicit research plan before execution (e.g. "create a plan",
+                "strategy for", "step by step", "roadmap").
+
 chat          — answered from general knowledge without live search: history,
                 science, definitions, writing help, explanations, opinions.
 
@@ -81,7 +104,7 @@ Reply with the mode name only — no explanation, no punctuation."""
 
 
 class RouteResult(BaseModel):
-    mode: Literal["research", "report", "data_analysis", "chat", "document", "code"] = Field(
+    mode: Literal["research", "report", "data_analysis", "debate", "plan", "chat", "document", "code"] = Field(
         description="Pipeline mode that best fits the user's request."
     )
 
@@ -110,6 +133,14 @@ def intent_router_node(state: AgentState) -> dict:
     if any(sig in q_lower for sig in _DATA_SIGNALS):
         logger.info(f"intent fast_path=data_analysis")
         return {"mode": "data_analysis"}
+
+    if any(sig in q_lower for sig in _DEBATE_SIGNALS):
+        logger.info(f"intent fast_path=debate")
+        return {"mode": "debate"}
+
+    if any(sig in q_lower for sig in _PLAN_SIGNALS):
+        logger.info(f"intent fast_path=plan")
+        return {"mode": "plan"}
 
     if any(sig in q_lower for sig in _RESEARCH_SIGNALS):
         logger.info(f"intent fast_path=research")

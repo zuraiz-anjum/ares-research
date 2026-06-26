@@ -3,10 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Research Assistant</title>
+  <title>AI Workspace</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
   <style>
     :root {
       --bg: #08090b;
@@ -331,6 +334,135 @@
       40% { transform: translateY(-7px); opacity:1; }
     }
 
+    /* ── Follow-up suggestion chips ─────────── */
+    .followup-wrap {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 2px 4px;
+    }
+
+    .followup-label {
+      font-size: 10.5px; font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .followup-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    .followup-chip {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 20px;
+      padding: 5px 13px;
+      font-size: 12px;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .followup-chip:hover {
+      border-color: var(--accent);
+      color: var(--text);
+      background: var(--surface3);
+      transform: translateY(-1px);
+    }
+
+    /* ── Code blocks (Prism overrides) ──────── */
+    .msg.bot pre {
+      margin: 10px 0;
+      border-radius: 8px;
+      overflow-x: auto;
+      border: 1px solid var(--border2);
+      font-size: 12.5px;
+    }
+
+    .msg.bot pre code { border: none; background: transparent; padding: 0; font-size: inherit; }
+
+    /* ── Source URL tag ─────────────────────── */
+    .source-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; color: var(--text-muted);
+      background: var(--surface3);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      padding: 3px 9px;
+      margin-top: 6px;
+      text-decoration: none;
+      transition: color 0.15s, border-color 0.15s;
+      max-width: 90%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .source-tag:hover { color: var(--accent); border-color: var(--accent); }
+    .source-tag::before { content: '↗'; font-size: 10px; }
+
+    /* ── Mode badge ─────────────────────────── */
+    .mode-badge {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin-left: 6px;
+    }
+
+    .mode-badge.research {
+      background: rgba(74,124,255,0.12);
+      border: 1px solid rgba(74,124,255,0.25);
+      color: var(--accent);
+    }
+
+    .mode-badge.chat {
+      background: rgba(124,79,255,0.12);
+      border: 1px solid rgba(124,79,255,0.25);
+      color: var(--accent2);
+    }
+
+    /* ── Critique section ────────────────────── */
+    .critique-section {
+      margin-top: 8px;
+      padding: 10px 14px;
+      background: #0a0c14;
+      border: 1px solid #1e2240;
+      border-left: 3px solid var(--accent2);
+      border-radius: 10px;
+      max-width: 90%;
+    }
+
+    .critique-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--accent2);
+      margin-bottom: 7px;
+      opacity: 0.85;
+    }
+
+    .critique-content {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.65;
+    }
+
+    .critique-content p { margin: 0 0 6px; }
+    .critique-content p:last-child { margin: 0; }
+    .critique-content ul { padding-left: 16px; margin: 0; }
+    .critique-content li { margin-bottom: 4px; }
+
+    /* ── Cursor blink while streaming ───────── */
+    .streaming-cursor::after {
+      content: '▋';
+      color: var(--accent);
+      animation: blink 0.8s step-end infinite;
+      margin-left: 1px;
+      font-size: 12px;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
     /* ── Footer ─────────────────────────────── */
     footer {
       padding: 14px 24px 16px;
@@ -406,32 +538,37 @@
 
 <header>
   <div class="header-left">
-    <div class="logo">🔍</div>
-    <span class="header-title">Research Assistant</span>
+    <div class="logo">⚡</div>
+    <span class="header-title">AI Workspace</span>
     <span class="header-badge">Multi-Agent · LangGraph</span>
   </div>
   <div class="pipeline" id="pipeline">
-    <div class="step" id="s0"><div class="step-dot"></div>Clarity</div>
+    <div class="step" data-node="clarity"><div class="step-dot"></div>Clarity</div>
     <span class="step-arrow">›</span>
-    <div class="step" id="s1"><div class="step-dot"></div>Decompose</div>
+    <div class="step" data-node="intent_router"><div class="step-dot"></div>Route</div>
     <span class="step-arrow">›</span>
-    <div class="step" id="s2"><div class="step-dot"></div>Research</div>
+    <div class="step" data-node="decomposer"><div class="step-dot"></div>Decompose</div>
     <span class="step-arrow">›</span>
-    <div class="step" id="s3"><div class="step-dot"></div>Synthesis</div>
+    <div class="step" data-node="research"><div class="step-dot"></div>Research</div>
+    <span class="step-arrow">›</span>
+    <div class="step" data-node="synthesis"><div class="step-dot"></div>Synthesis</div>
+    <span class="step-arrow">›</span>
+    <div class="step" data-node="critic"><div class="step-dot"></div>Critique</div>
+    <span id="mode-badge" class="mode-badge" style="display:none"></span>
   </div>
 </header>
 
 <div id="chat">
   <div id="chat-inner">
     <div class="empty" id="empty-state">
-      <div class="empty-glow">🔍</div>
-      <h2>Company Research Assistant</h2>
-      <p>Ask about any company — funding, leadership, products, recent news. Ask compound questions to see parallel search in action.</p>
+      <div class="empty-glow">⚡</div>
+      <h2>AI Workspace</h2>
+      <p>Research companies, compare competitors, and get structured answers — powered by a multi-agent pipeline running in parallel.</p>
       <div class="chips">
-        <button class="chip" onclick="fill(this)">Stripe's recent funding</button>
-        <button class="chip" onclick="fill(this)">Compare OpenAI and Anthropic</button>
-        <button class="chip" onclick="fill(this)">What is Notion working on?</button>
-        <button class="chip" onclick="fill(this)">Tell me about the company</button>
+        <button class="chip" onclick="fill(this)">Compare Stripe and Brex's funding</button>
+        <button class="chip" onclick="fill(this)">Write a report on Anthropic</button>
+        <button class="chip" onclick="fill(this)">Write a binary search in Python</button>
+        <button class="chip" onclick="fill(this)">Compare the revenue numbers for OpenAI vs Mistral</button>
       </div>
     </div>
   </div>
@@ -439,24 +576,49 @@
 
 <footer>
   <div class="input-row">
-    <input id="input" placeholder="Ask about a company..." autocomplete="off" />
+    <input id="input" placeholder="Ask me anything..." autocomplete="off" />
     <button class="send-btn" id="send">Send</button>
   </div>
-  <div class="footer-hint">Try "Compare Stripe and Brex's funding" to see the parallel decomposition agent in action</div>
+  <div class="footer-hint">Try "Compare Stripe and Brex" to see parallel query decomposition in action</div>
 </footer>
 
 <script>
   marked.setOptions({ breaks: true, gfm: true });
 
-  const chatEl   = document.getElementById("chat");
-  const inner    = document.getElementById("chat-inner");
-  const inputEl  = document.getElementById("input");
-  const sendBtn  = document.getElementById("send");
-  const pipeline = document.getElementById("pipeline");
+  const chatEl    = document.getElementById("chat");
+  const inner     = document.getElementById("chat-inner");
+  const inputEl   = document.getElementById("input");
+  const sendBtn   = document.getElementById("send");
+  const pipelineEl = document.getElementById("pipeline");
 
-  const STEPS = ["s0","s1","s2","s3"];
-  let stepIdx = 0, stepTimer = null;
-  let threadId = null, awaitingClarification = false, typingEl = null;
+  // Pipeline configs per mode — defines which nodes appear and in what order.
+  const PIPELINE_CONFIGS = {
+    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "critic", "suggestions"],
+    report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
+    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "suggestions"],
+    chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
+    document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
+    code:          ["clarity", "intent_router", "code_writer", "suggestions"],
+  };
+
+  const NODE_LABELS = {
+    clarity: "Clarity", intent_router: "Route", decomposer: "Decompose",
+    research: "Research", synthesis: "Synthesis", critic: "Critique",
+    report_writer: "Report", doc_agent: "Document", validator: "Validate",
+    data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
+  };
+
+  // Streaming nodes — the ones whose LLM tokens go into the main bubble.
+  const STREAMING_NODES = new Set(["synthesis", "report_writer", "data_analyst", "code_writer"]);
+
+  let threadId = null;
+  let awaitingClarification = false;
+  let typingEl = null;
+  let activeEs = null;
+  let activePipeline = ["clarity", "intent_router"]; // updated on mode event
+  let currentMode = "research";
+
+  // ── Helpers ──────────────────────────────────────────────────────────
 
   function fill(el) { inputEl.value = el.textContent; inputEl.focus(); }
 
@@ -465,39 +627,97 @@
     if (e) e.remove();
   }
 
-  function startPipeline() {
-    pipeline.classList.add("visible");
-    STEPS.forEach(id => { const el=document.getElementById(id); el.classList.remove("active","done"); });
-    stepIdx = 0;
-    function tick() {
-      if (stepIdx > 0) document.getElementById(STEPS[stepIdx-1]).classList.replace("active","done");
-      if (stepIdx < STEPS.length) {
-        document.getElementById(STEPS[stepIdx]).classList.add("active");
-        stepIdx++;
-        stepTimer = setTimeout(tick, 2000);
-      }
-    }
-    tick();
+  function escapeHtml(t) {
+    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
 
-  function stopPipeline() {
-    clearTimeout(stepTimer);
-    STEPS.forEach(id => { const el=document.getElementById(id); el.classList.remove("active"); el.classList.add("done"); });
+  // ── Pipeline ─────────────────────────────────────────────────────────
+
+  function _buildPipelineHtml(nodes, doneSet) {
+    return nodes.map((node, i) => {
+      const label = NODE_LABELS[node] || node;
+      const cls = doneSet.has(node) ? "step done" : "step";
+      const arrow = i < nodes.length - 1 ? '<span class="step-arrow">›</span>' : '';
+      return `<div class="${cls}" data-node="${node}"><div class="step-dot"></div>${label}</div>${arrow}`;
+    }).join('');
+  }
+
+  function showPipeline() {
+    activePipeline = ["clarity", "intent_router"];
+    currentMode = "research";
+    pipelineEl.innerHTML = _buildPipelineHtml(activePipeline, new Set());
+    pipelineEl.classList.add("visible");
+    // Mark clarity as active immediately.
+    const clarityEl = pipelineEl.querySelector('[data-node="clarity"]');
+    if (clarityEl) clarityEl.classList.add("active");
+  }
+
+  function setMode(mode) {
+    currentMode = mode;
+    const config = PIPELINE_CONFIGS[mode] || PIPELINE_CONFIGS.research;
+    const done = new Set(["clarity", "intent_router"]);
+    pipelineEl.innerHTML = _buildPipelineHtml(config, done);
+    activePipeline = config;
+
+    const badge = document.createElement("span");
+    badge.id = "mode-badge";
+    badge.className = `mode-badge ${mode.startsWith("data") || mode === "code" || mode === "report" ? "research" : mode}`;
+    const modeText = { research: "RESEARCH", report: "REPORT", data_analysis: "DATA", chat: "CHAT", document: "DOC", code: "CODE" };
+    badge.textContent = modeText[mode] || mode.toUpperCase();
+    pipelineEl.appendChild(badge);
+  }
+
+  function advancePipelineToNode(node) {
+    const targetIdx = activePipeline.indexOf(node);
+    if (targetIdx === -1) return;
+    pipelineEl.querySelectorAll(".step[data-node]").forEach(el => {
+      const idx = activePipeline.indexOf(el.dataset.node);
+      el.classList.remove("active", "done");
+      if (idx < targetIdx)        el.classList.add("done");
+      else if (idx === targetIdx) el.classList.add("active");
+    });
+  }
+
+  function donePipeline() {
+    pipelineEl.querySelectorAll(".step").forEach(el => {
+      el.classList.remove("active");
+      el.classList.add("done");
+    });
     setTimeout(() => {
-      STEPS.forEach(id => document.getElementById(id).classList.remove("done"));
-      pipeline.classList.remove("visible");
-    }, 1000);
+      pipelineEl.querySelectorAll(".step").forEach(el => el.classList.remove("done"));
+      pipelineEl.classList.remove("visible");
+      pipelineEl.innerHTML = "";
+    }, 1400);
   }
 
-  function showTyping() {
+  // ── Typing indicator ─────────────────────────────────────────────────
+
+  function showTyping(label) {
     typingEl = document.createElement("div");
     typingEl.className = "typing";
-    typingEl.innerHTML = `<div class="dots"><span></span><span></span><span></span></div>Analyzing and researching...`;
+    typingEl.innerHTML = `<div class="dots"><span></span><span></span><span></span></div><span class="typing-text">${label || "Thinking..."}</span>`;
     inner.appendChild(typingEl);
     chatEl.scrollTop = chatEl.scrollHeight;
   }
 
-  function hideTyping() { if (typingEl) { typingEl.remove(); typingEl = null; } }
+  function updateTypingLabel(text) {
+    const span = typingEl?.querySelector(".typing-text");
+    if (span) span.textContent = text;
+  }
+
+  function hideTyping() {
+    if (typingEl) { typingEl.remove(); typingEl = null; }
+  }
+
+  // ── Message rendering ─────────────────────────────────────────────────
+
+  function _modeLabel(mode) {
+    const labels = {
+      report: "Research Report", document: "Document Analysis",
+      data_analysis: "Data Analysis", code: "Code", chat: "Assistant",
+    };
+    return labels[mode] || "Assistant";
+  }
 
   function addMsg(text, type, subQueries) {
     hideEmpty();
@@ -507,10 +727,9 @@
     if (type === "bot") {
       const lbl = document.createElement("div");
       lbl.className = "msg-label";
-      lbl.textContent = "Research Assistant";
+      lbl.textContent = _modeLabel(currentMode);
       g.appendChild(lbl);
     }
-
     if (type === "clar") {
       const lbl = document.createElement("div");
       lbl.className = "msg-label";
@@ -520,43 +739,287 @@
 
     const msg = document.createElement("div");
     msg.className = "msg " + type;
-    msg.innerHTML = type === "bot" ? marked.parse(text) : escapeHtml(text);
+    msg.innerHTML = (type === "bot") ? marked.parse(text) : escapeHtml(text);
     g.appendChild(msg);
 
-    if (subQueries && subQueries.length > 1) {
-      const sq = document.createElement("div");
-      sq.className = "sub-queries";
-      const lbl = document.createElement("div");
-      lbl.className = "sub-label";
-      lbl.textContent = "Searched in parallel";
-      const tags = document.createElement("div");
-      tags.className = "sub-tags";
-      subQueries.forEach(q => {
-        const t = document.createElement("span");
-        t.className = "sub-tag";
-        t.textContent = q;
-        tags.appendChild(t);
-      });
-      sq.appendChild(lbl);
-      sq.appendChild(tags);
-      g.appendChild(sq);
-    }
+    if (subQueries && subQueries.length > 1) appendSubQueries(g, subQueries);
 
     inner.appendChild(g);
     chatEl.scrollTop = chatEl.scrollHeight;
+    return { group: g, bubble: msg };
   }
 
-  function escapeHtml(t) {
-    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  function createBotGroup() {
+    hideEmpty();
+    const g = document.createElement("div");
+    g.className = "msg-group bot";
+    const lbl = document.createElement("div");
+    lbl.className = "msg-label";
+    lbl.textContent = _modeLabel(currentMode);
+    const msg = document.createElement("div");
+    msg.className = "msg bot streaming-cursor";
+    g.appendChild(lbl);
+    g.appendChild(msg);
+    inner.appendChild(g);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return { group: g, bubble: msg };
   }
+
+  function appendSubQueries(group, queries) {
+    if (!queries || queries.length <= 1) return;
+    const sq = document.createElement("div");
+    sq.className = "sub-queries";
+    const lbl = document.createElement("div");
+    lbl.className = "sub-label";
+    lbl.textContent = "Searched in parallel";
+    const tags = document.createElement("div");
+    tags.className = "sub-tags";
+    queries.forEach(q => {
+      const t = document.createElement("span");
+      t.className = "sub-tag";
+      t.textContent = q;
+      tags.appendChild(t);
+    });
+    sq.appendChild(lbl);
+    sq.appendChild(tags);
+    group.appendChild(sq);
+  }
+
+  function appendSourceUrl(group, url) {
+    const a = document.createElement("a");
+    a.className = "source-tag";
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = url;
+    group.appendChild(a);
+  }
+
+  function appendSuggestions(group, questions) {
+    if (!questions || questions.length === 0) return;
+    const wrap = document.createElement("div");
+    wrap.className = "followup-wrap";
+    const lbl = document.createElement("div");
+    lbl.className = "followup-label";
+    lbl.textContent = "Follow up";
+    const chips = document.createElement("div");
+    chips.className = "followup-chips";
+    questions.forEach(q => {
+      const btn = document.createElement("button");
+      btn.className = "followup-chip";
+      btn.textContent = q;
+      btn.onclick = () => { inputEl.value = q; inputEl.focus(); };
+      chips.appendChild(btn);
+    });
+    wrap.appendChild(lbl);
+    wrap.appendChild(chips);
+    group.appendChild(wrap);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  function appendCritique(group, content) {
+    const section = document.createElement("div");
+    section.className = "critique-section";
+    section.innerHTML = `
+      <div class="critique-label">Critical Perspective</div>
+      <div class="critique-content">${marked.parse(content)}</div>
+    `;
+    group.appendChild(section);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  // ── JSON POST (used only for /resume) ────────────────────────────────
 
   async function post(url, body) {
-    const r = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
     return r.json();
   }
 
-  function handle(data) {
-    hideTyping(); stopPipeline();
+  // ── Submit ────────────────────────────────────────────────────────────
+
+  async function submit() {
+    const text = inputEl.value.trim();
+    if (!text || sendBtn.disabled) return;
+
+    if (activeEs) { activeEs.close(); activeEs = null; }
+
+    hideEmpty();
+    addMsg(text, "user");
+    inputEl.value = "";
+    sendBtn.disabled = true;
+    showTyping("Checking your question...");
+    showPipeline();
+
+    if (awaitingClarification) {
+      try {
+        const data = await post("/resume", { thread_id: threadId, clarification: text });
+        handleJsonResponse(data);
+      } catch {
+        hideTyping(); donePipeline();
+        addMsg("Something went wrong. Please try again.", "error");
+      } finally {
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
+      return;
+    }
+
+    let botGroup = null;
+    let botBubble = null;
+    let rawContent = "";
+    let pendingSubQueries = null;
+
+    const params = new URLSearchParams({ message: text });
+    if (threadId) params.set("thread_id", threadId);
+
+    const es = new EventSource(`/chat/stream?${params}`);
+    activeEs = es;
+
+    es.onmessage = (evt) => {
+      let data;
+      try { data = JSON.parse(evt.data); } catch { return; }
+
+      switch (data.type) {
+
+        case "node_start": {
+          advancePipelineToNode(data.node);
+          const labels = {
+            clarity:       "Checking your question...",
+            intent_router: "Routing to the right pipeline...",
+            decomposer:    "Breaking down your question...",
+            research:      "Researching...",
+            validator:     "Validating findings...",
+            doc_agent:     "Fetching document...",
+            data_analyst:  null,  // streaming node — creates bubble below
+            suggestions:   null,  // fast, silent
+          };
+          if (STREAMING_NODES.has(data.node)) {
+            // synthesis or report_writer — create the streaming bubble now.
+            hideTyping();
+            ({ group: botGroup, bubble: botBubble } = createBotGroup());
+            if (pendingSubQueries) {
+              appendSubQueries(botGroup, pendingSubQueries);
+              pendingSubQueries = null;
+            }
+          } else if (data.node === "critic" && botGroup) {
+            const spinner = document.createElement("div");
+            spinner.className = "typing critique-spinner";
+            spinner.style.cssText = "padding: 6px 4px; opacity: 0.7;";
+            spinner.innerHTML = `<div class="dots"><span></span><span></span><span></span></div><span class="typing-text" style="font-size:12px">Critiquing the answer...</span>`;
+            botGroup.appendChild(spinner);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          } else if (labels[data.node]) {
+            updateTypingLabel(labels[data.node]);
+          }
+          break;
+        }
+
+        case "mode": {
+          setMode(data.mode);
+          break;
+        }
+
+        case "decomposed": {
+          if (data.queries && data.queries.length > 1) {
+            if (botGroup) appendSubQueries(botGroup, data.queries);
+            else pendingSubQueries = data.queries;
+          }
+          break;
+        }
+
+        case "token": {
+          if (botBubble && data.content) {
+            rawContent += data.content;
+            botBubble.innerHTML = marked.parse(rawContent);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
+          break;
+        }
+
+        case "critique": {
+          botGroup?.querySelector(".critique-spinner")?.remove();
+          if (botGroup && data.content) appendCritique(botGroup, data.content);
+          break;
+        }
+
+        case "suggestions": {
+          if (botGroup && data.questions?.length) appendSuggestions(botGroup, data.questions);
+          break;
+        }
+
+        case "complete": {
+          threadId = data.thread_id;
+          awaitingClarification = false;
+          donePipeline();
+
+          if (botBubble) {
+            botBubble.classList.remove("streaming-cursor");
+            botBubble.innerHTML = marked.parse(data.answer || rawContent);
+            if (data.sub_queries?.length > 1 && !botGroup.querySelector(".sub-queries")) {
+              appendSubQueries(botGroup, data.sub_queries);
+            }
+            if (data.source_url) appendSourceUrl(botGroup, data.source_url);
+            if (data.critique && !botGroup.querySelector(".critique-section")) {
+              appendCritique(botGroup, data.critique);
+            }
+            botGroup.querySelector(".critique-spinner")?.remove();
+            // Fallback: suggestions via complete payload if event was missed.
+            if (data.suggestions?.length && !botGroup.querySelector(".followup-wrap")) {
+              appendSuggestions(botGroup, data.suggestions);
+            }
+          } else {
+            const { group } = addMsg(data.answer || "(no answer)", "bot", data.sub_queries);
+            if (data.source_url) appendSourceUrl(group, data.source_url);
+            if (data.critique) appendCritique(group, data.critique);
+            if (data.suggestions?.length) appendSuggestions(group, data.suggestions);
+          }
+          // Syntax-highlight any code blocks in the rendered message.
+          if (typeof Prism !== "undefined") Prism.highlightAllUnder(botGroup || inner);
+          cleanup();
+          break;
+        }
+
+        case "needs_clarification": {
+          threadId = data.thread_id;
+          awaitingClarification = true;
+          hideTyping(); donePipeline();
+          addMsg(data.question, "clar");
+          cleanup();
+          break;
+        }
+
+        case "error": {
+          hideTyping(); donePipeline();
+          addMsg(data.message || "An error occurred.", "error");
+          cleanup();
+          break;
+        }
+      }
+    };
+
+    es.onerror = () => {
+      hideTyping(); donePipeline();
+      if (!botBubble) addMsg("Connection lost. Please try again.", "error");
+      else botBubble.classList.remove("streaming-cursor");
+      cleanup();
+    };
+
+    function cleanup() {
+      es.close();
+      activeEs = null;
+      sendBtn.disabled = false;
+      inputEl.focus();
+    }
+  }
+
+  // ── Handle non-streaming responses (resume) ───────────────────────────
+
+  function handleJsonResponse(data) {
+    hideTyping(); donePipeline();
     threadId = data.thread_id;
     if (data.status === "needs_clarification") {
       awaitingClarification = true;
@@ -566,30 +1029,9 @@
       addMsg(data.answer, "error");
     } else {
       awaitingClarification = false;
-      addMsg(data.answer, "bot", data.sub_queries);
-    }
-  }
-
-  async function submit() {
-    const text = inputEl.value.trim();
-    if (!text) return;
-    hideEmpty();
-    addMsg(text, "user");
-    inputEl.value = "";
-    sendBtn.disabled = true;
-    showTyping();
-    startPipeline();
-    try {
-      const data = awaitingClarification
-        ? await post("/resume", { thread_id: threadId, clarification: text })
-        : await post("/chat", { message: text, thread_id: threadId });
-      handle(data);
-    } catch(e) {
-      hideTyping(); stopPipeline();
-      addMsg("Something went wrong. Check the server logs.", "error");
-    } finally {
-      sendBtn.disabled = false;
-      inputEl.focus();
+      const { group } = addMsg(data.answer, "bot", data.sub_queries);
+      if (data.source_url) appendSourceUrl(group, data.source_url);
+      if (data.critique) appendCritique(group, data.critique);
     }
   }
 

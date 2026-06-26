@@ -10,7 +10,7 @@ from app.config import settings, truncate_to_budget
 from app.llm import get_llm
 from app.state import AgentState
 
-SYNTHESIS_SYSTEM_PROMPT = """You are the Synthesis Agent in a company-research assistant.
+RESEARCH_SYNTHESIS_PROMPT = """You are the Synthesis Agent in a research workspace.
 Write a clear, well-structured answer to the user's question using the research
 findings below. Be specific, cite concrete facts, and keep the conversation
 context in mind so follow-up questions feel natural.
@@ -18,16 +18,41 @@ context in mind so follow-up questions feel natural.
 Research findings:
 {research}"""
 
+DOCUMENT_SYNTHESIS_PROMPT = """You are a Document Analysis agent. Answer the user's
+question using the document content below. Be specific and quote or paraphrase
+relevant passages when helpful. If the document doesn't contain enough information
+to answer, say so clearly.
 
-def synthesis_node(state: AgentState) -> dict:
-    research = state.get("findings", "") or state.get("raw_research", "")
+Document content:
+{content}"""
+
+CHAT_SYNTHESIS_PROMPT = """You are a helpful AI assistant. Answer the user's
+question clearly, accurately, and concisely. Use markdown formatting when it
+genuinely helps clarity (headers, bullets, code blocks). Avoid unnecessary
+padding or filler sentences."""
+
+
+async def synthesis_node(state: AgentState) -> dict:
+    mode = state.get("mode", "research")
     history = state["messages"][-10:]
 
     if settings.mock_mode:
-        return {"messages": [AIMessage(content=f"Mock answer based on: {research[:100]}")]}
+        labels = {"research": "research", "chat": "chat", "document": "document analysis"}
+        return {"messages": [AIMessage(content=f"Mock {labels.get(mode, mode)} answer: placeholder response.")]}
 
-    research, _ = truncate_to_budget(research, label="synthesis_findings")
-    system = SYNTHESIS_SYSTEM_PROMPT.format(research=research)
-    llm = get_llm()
-    response = llm.invoke([SystemMessage(content=system), *history])
+    if mode == "chat":
+        system = CHAT_SYNTHESIS_PROMPT
+    elif mode == "document":
+        content = state.get("findings", "") or state.get("raw_research", "")
+        content, _ = truncate_to_budget(content, label="doc_content")
+        system = DOCUMENT_SYNTHESIS_PROMPT.format(content=content)
+    else:
+        research = state.get("findings", "") or state.get("raw_research", "")
+        research, _ = truncate_to_budget(research, label="synthesis_findings")
+        system = RESEARCH_SYNTHESIS_PROMPT.format(research=research)
+
+    # streaming=True causes LangGraph's astream_events to emit on_chat_model_stream
+    # events per token, which the SSE endpoint forwards to the client in real time.
+    llm = get_llm(streaming=True)
+    response = await llm.ainvoke([SystemMessage(content=system), *history])
     return {"messages": [AIMessage(content=response.content)]}

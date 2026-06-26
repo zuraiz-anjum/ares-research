@@ -50,7 +50,7 @@ But that's not how company research questions work. "Compare Stripe and Brex's f
 
 These have nothing to do with each other. You don't need to know Stripe's funding before you can search for Brex's. Running them one after the other is just wasting time.
 
-LangChain's MultiQueryRetriever looks similar on the surface but solves a fundamentally different problem — it rephrases one query multiple ways to improve recall from a single knowledge source. My use case is genuine decomposition: the sub-queries retrieve completely different information from different searches. The distinction matters architecturally — rephrasing is about search coverage, decomposition is about query planning.
+LangChain's MultiQueryRetriever looks similar on the surface but solves a fundamentally different problem as it rephrases one query multiple ways to improve recall from a single knowledge source. My use case is genuine decomposition: the sub-queries retrieve completely different information from different searches. The distinction matters architecturally — rephrasing is about search coverage, decomposition is about query planning.
 
 ---
 

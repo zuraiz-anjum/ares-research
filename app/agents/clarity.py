@@ -15,15 +15,18 @@ from app.config import settings
 from app.llm import get_llm
 from app.state import AgentState
 
-CLARITY_SYSTEM_PROMPT = """You are the Clarity Agent in a company-research assistant.
-Decide whether the user's latest request is specific enough to begin research.
+CLARITY_SYSTEM_PROMPT = """You are the Clarity Agent in an AI workspace assistant.
+Decide whether the user's request is specific enough to act on.
 
-A request is "clear" when it names (or unambiguously implies) a specific company
-and a researchable intent. It "needs_clarification" when no company can be
-identified or the ask is too broad to act on.
+"clear" — the request has an identifiable subject and intent. This includes
+  company/market research, general knowledge questions, coding help, comparisons,
+  explanations, writing tasks, or anything that can be acted on as-is.
 
-If clarification is needed, write a single, friendly question that would unblock
-you (e.g. "Which company are you asking about?")."""
+"needs_clarification" — the request is genuinely ambiguous: no resolvable subject
+  or intent (e.g. "tell me about the thing", "what about them?", "just look it up"
+  with no context).
+
+If clarification is needed, write one short, friendly question to unblock you."""
 
 
 class ClarityVerdict(BaseModel):

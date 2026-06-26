@@ -31,3 +31,15 @@ class AgentState(TypedDict, total=False):
 
     # Decomposer agent output.
     sub_queries: list[str]          # parallel sub-queries for compound questions
+
+    # Intent router output.
+    mode: str                       # "research" | "report" | "chat" | "document"
+
+    # Document agent output.
+    source_url: str
+
+    # Critic agent output.
+    critique: str
+
+    # Suggestions agent output.
+    suggestions: list[str]

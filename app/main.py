@@ -25,6 +25,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from langgraph.errors import GraphInterrupt
+
 from app.config import settings, validate_settings
 from app.graph import graph
 
@@ -90,11 +92,25 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         if err:
             return err
     try:
-        result = await asyncio.to_thread(graph.invoke, inputs, config)
+        # ainvoke instead of asyncio.to_thread(graph.invoke) because several
+        # nodes (synthesis, report_writer, etc.) are async functions.
+        result = await graph.ainvoke(inputs, config)
+    except GraphInterrupt as exc:
+        question = "Could you clarify your request?"
+        if exc.args:
+            val = exc.args[0]
+            if isinstance(val, (list, tuple)) and val:
+                try:
+                    question = val[0].value.get("question", question)
+                except Exception:
+                    pass
+        logger.info(f"clarification_needed thread={thread_id}")
+        return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
     except Exception:
         logger.exception(f"graph_error thread={thread_id}")
         return {"status": "error", "answer": "An internal error occurred. Please try again.", "thread_id": thread_id}
 
+    # Fallback for older LangGraph versions that return __interrupt__ in the dict.
     if isinstance(result, dict) and result.get("__interrupt__"):
         interrupt = result["__interrupt__"][0]
         question = interrupt.value.get("question", "Could you clarify your request?")
@@ -236,7 +252,7 @@ async def chat_stream(
         # We always do this via get_state so we don't rely on the final event output
         # structure, which differs between LangGraph versions.
         try:
-            snapshot = await asyncio.to_thread(graph.get_state, config)
+            snapshot = await graph.aget_state(config)
             pending = [ipt for task in snapshot.tasks for ipt in (task.interrupts or [])]
             if pending:
                 question = pending[0].value.get("question", "Could you clarify your request?")

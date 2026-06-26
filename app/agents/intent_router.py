@@ -33,8 +33,9 @@ _URL_RE = re.compile(r"https?://")
 _REPORT_SIGNALS = {
     "write a report", "create a report", "make a report", "generate a report",
     "write an analysis", "create an analysis", "research report",
-    "write me a report", "write me an analysis", "detailed report",
-    "comprehensive report", "full report", "in-depth report",
+    "write me a report", "write me an analysis",
+    "detailed report", "comprehensive report", "full report", "in-depth report",
+    "short report", "brief report", "report on", "write report",
 }
 
 _DATA_SIGNALS = {

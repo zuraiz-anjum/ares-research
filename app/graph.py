@@ -18,9 +18,7 @@ Pipelines by mode (set by intent_router after clarity):
 suggestions is the universal terminal node across all pipelines.
 """
 
-import sqlite3
-
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.clarity import clarity_node
@@ -152,9 +150,10 @@ def build_graph():
     builder.add_edge("code_writer",   "suggestions")
     builder.add_edge("suggestions",   END)
 
-    conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
-    return builder.compile(checkpointer=checkpointer)
+    # MemorySaver supports all async methods (ainvoke, astream_events, aget_state).
+    # For production persistence swap this for AsyncPostgresSaver or AsyncSqliteSaver
+    # initialised in a FastAPI lifespan context manager.
+    return builder.compile(checkpointer=MemorySaver())
 
 
 # Compiled once at import time and reused across requests.

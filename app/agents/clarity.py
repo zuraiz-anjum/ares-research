@@ -16,17 +16,35 @@ from app.llm import get_llm
 from app.state import AgentState
 
 CLARITY_SYSTEM_PROMPT = """You are the Clarity Agent in an AI workspace assistant.
-Decide whether the user's request is specific enough to act on.
+Your job is to decide if a request can be acted on AS-IS, or if it truly cannot
+proceed without more information.
 
-"clear" — the request has an identifiable subject and intent. This includes
-  company/market research, general knowledge questions, coding help, comparisons,
-  explanations, writing tasks, or anything that can be acted on as-is.
+Return "clear" if:
+  - The request names at least one identifiable subject (company, person, topic, etc.)
+  - The intent is understandable (research, compare, explain, code, write, plan)
+  - This includes: company research, data comparisons (even if time period unspecified —
+    assume most recent available), coding tasks, explanations, debates, plans, document
+    analysis, or general knowledge questions.
+  - IMPORTANT: Missing details like time period, specific metric, or format are NOT
+    reasons to ask for clarification. The agent can make reasonable assumptions.
 
-"needs_clarification" — the request is genuinely ambiguous: no resolvable subject
-  or intent (e.g. "tell me about the thing", "what about them?", "just look it up"
-  with no context).
+Return "needs_clarification" ONLY if:
+  - There is NO identifiable subject (e.g. "tell me about it", "what about them?")
+  - The intent is completely unknowable (e.g. "just do the thing")
+  - Without clarification the request literally cannot be started.
 
-If clarification is needed, write one short, friendly question to unblock you."""
+Examples of "clear":
+  - "Compare revenue numbers for Stripe and Brex" → clear (subjects + intent known)
+  - "What is OpenAI's valuation?" → clear
+  - "Write a function to sort a list" → clear
+  - "Pros and cons of Python vs Go" → clear
+  - "Tell me about Anthropic" → clear
+
+Examples of "needs_clarification":
+  - "Tell me about them" (no subject) → needs_clarification
+  - "Look it up" (no subject or topic) → needs_clarification
+
+If clarification IS needed, write one short, friendly question."""
 
 
 class ClarityVerdict(BaseModel):

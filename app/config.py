@@ -11,10 +11,14 @@ class Settings(BaseSettings):
 
     # --- Provider credentials -------------------------------------------------
     groq_api_key: str = ""
+    gemini_api_key: str = ""
+    openrouter_api_key: str = ""
+    cerebras_api_key: str = ""
     tavily_api_key: str = ""
 
     # --- Model selection ------------------------------------------------------
-    llm_model: str = "llama-3.3-70b-versatile"
+    # Auto-selected per provider in llm.py — override here if needed.
+    llm_model: str = ""
     llm_temperature: float = 0.2
 
     # --- Research behaviour ---------------------------------------------------
@@ -52,8 +56,14 @@ def validate_settings() -> None:
     """Fail fast on startup if required credentials are missing."""
     missing = []
     if not settings.mock_mode:
-        if not settings.groq_api_key:
-            missing.append("GROQ_API_KEY")
+        has_llm = any([
+            settings.groq_api_key,
+            settings.gemini_api_key,
+            settings.openrouter_api_key,
+            settings.cerebras_api_key,
+        ])
+        if not has_llm:
+            missing.append("one of: GROQ_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY, CEREBRAS_API_KEY")
         if not settings.tavily_api_key:
             missing.append("TAVILY_API_KEY")
     if missing:

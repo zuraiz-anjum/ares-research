@@ -14,3 +14,4 @@ slowapi>=0.1.9
 langgraph-checkpoint-sqlite>=2.0.0
 aiosqlite>=0.20.0
 langchain-groq>=0.2.0
+langchain-google-genai>=2.0.0

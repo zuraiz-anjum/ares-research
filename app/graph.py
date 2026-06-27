@@ -6,7 +6,7 @@ Pipelines by mode (set by intent_router after clarity):
 
   research    → decomposer → research → validator* → synthesis → fact_checker → critic → suggestions → END
   report      → decomposer → research → validator* → report_writer → suggestions → END
-  pdf         → decomposer → research → validator* → report_writer → pdf_generator → chart_writer → suggestions → END
+  pdf         → decomposer → research → validator* → report_writer → chart_writer → pdf_generator → suggestions → END
   data_analysis → decomposer → research → validator* → data_analyst → chart_writer → suggestions → END
   comparison  → decomposer → research → validator* → comparison_matrix → chart_writer → suggestions → END
   debate      → decomposer → research → validator* → debate_writer → suggestions → END
@@ -81,7 +81,14 @@ def route_after_intent(state: AgentState) -> str:
 
 
 def route_after_report_writer(state: AgentState) -> str:
-    """PDF mode adds a pdf_generator step after report_writer."""
+    """PDF mode: chart first (so the PNG exists), then pdf_generator embeds it."""
+    if state.get("mode") == "pdf":
+        return "chart_writer"
+    return "suggestions"
+
+
+def route_after_chart_writer(state: AgentState) -> str:
+    """After chart is rendered, pdf mode continues to pdf_generator; others end."""
     if state.get("mode") == "pdf":
         return "pdf_generator"
     return "suggestions"
@@ -174,16 +181,18 @@ def build_graph():
     builder.add_edge("critic",            "suggestions")
     builder.add_conditional_edges(
         "report_writer", route_after_report_writer,
-        {"pdf_generator": "pdf_generator", "suggestions": "suggestions"},
+        {"chart_writer": "chart_writer", "suggestions": "suggestions"},
     )
-    # pdf mode: after the PDF is generated, also render a chart from the
-    # report content so the user gets both a visual and a downloadable doc.
-    builder.add_edge("pdf_generator",     "chart_writer")
+    builder.add_edge("pdf_generator",     "suggestions")
 
     # data_analysis + comparison auto-generate a chart after the tabular output.
+    # pdf mode routes report_writer → chart_writer → pdf_generator (chart embedded in PDF).
     builder.add_edge("data_analyst",      "chart_writer")
     builder.add_edge("comparison_matrix", "chart_writer")
-    builder.add_edge("chart_writer",      "suggestions")
+    builder.add_conditional_edges(
+        "chart_writer", route_after_chart_writer,
+        {"pdf_generator": "pdf_generator", "suggestions": "suggestions"},
+    )
 
     builder.add_edge("debate_writer",     "suggestions")
     builder.add_edge("email_drafter",     "suggestions")

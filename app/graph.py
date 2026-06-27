@@ -6,7 +6,7 @@ Pipelines by mode (set by intent_router after clarity):
 
   research    → decomposer → research → validator* → synthesis → fact_checker → critic → suggestions → END
   report      → decomposer → research → validator* → report_writer → suggestions → END
-  pdf         → decomposer → research → validator* → report_writer → pdf_generator → suggestions → END
+  pdf         → decomposer → research → validator* → report_writer → pdf_generator → chart_writer → suggestions → END
   data_analysis → decomposer → research → validator* → data_analyst → chart_writer → suggestions → END
   comparison  → decomposer → research → validator* → comparison_matrix → chart_writer → suggestions → END
   debate      → decomposer → research → validator* → debate_writer → suggestions → END
@@ -176,7 +176,9 @@ def build_graph():
         "report_writer", route_after_report_writer,
         {"pdf_generator": "pdf_generator", "suggestions": "suggestions"},
     )
-    builder.add_edge("pdf_generator",     "suggestions")
+    # pdf mode: after the PDF is generated, also render a chart from the
+    # report content so the user gets both a visual and a downloadable doc.
+    builder.add_edge("pdf_generator",     "chart_writer")
 
     # data_analysis + comparison auto-generate a chart after the tabular output.
     builder.add_edge("data_analyst",      "chart_writer")

@@ -166,9 +166,9 @@ def _render(spec: ChartSpec) -> str:
 def chart_writer_node(state: AgentState) -> dict:
     mode = state.get("mode", "chart")
 
-    if mode in ("data_analysis", "comparison"):
-        # Derive chart data from the previous agent's structured output (the
-        # data_analyst or comparison_matrix markdown table already in messages).
+    if mode in ("data_analysis", "comparison", "pdf", "report"):
+        # Derive chart data from the previous agent's output (the
+        # data_analyst, comparison_matrix, or report_writer content).
         prior_output = next(
             (m.content for m in reversed(state["messages"])
              if hasattr(m, "content") and m.content),
@@ -176,7 +176,9 @@ def chart_writer_node(state: AgentState) -> dict:
         )
         prompt_content = (
             f"Original question: {state.get('original_query', '')}\n\n"
-            f"Extract the numerical data from this analysis and produce a chart:\n\n{prior_output}"
+            f"Extract the numerical data from this content and produce a chart. "
+            f"If multiple entities are compared, use a bar or horizontal_bar chart "
+            f"with one bar per entity:\n\n{prior_output}"
         )
     else:
         prompt_content = state.get("original_query") or state["messages"][-1].content

@@ -79,6 +79,18 @@ _PLAN_SIGNALS = {
     "action plan", "how do i achieve", "how do i get",
 }
 
+# Word-boundary regex patterns are used for PDF and chart detection
+# instead of phrase lists — a human says "pdf" in too many ways to
+# enumerate ("in pdf form", "as a pdf please", "pdf it", "pdf version",
+# "give me a pdf", etc.).  A single \bpdf\b catches all of them.
+_PDF_RE    = re.compile(r'\bpdf\b', re.IGNORECASE)
+_CHART_RE  = re.compile(
+    r'\b(chart|bar chart|line chart|pie chart|scatter|histogram|'
+    r'plot|visuali[sz]e?|visualization|visualisation|graph the|graph this)\b',
+    re.IGNORECASE,
+)
+
+# Legacy phrase sets kept for fallback completeness.
 _CHART_SIGNALS = {
     "chart", "bar chart", "line chart", "pie chart", "scatter plot",
     "histogram", "make a chart", "create a chart", "draw a chart",
@@ -90,7 +102,8 @@ _PDF_SIGNALS = {
     "generate pdf", "export pdf", "download pdf", "as a pdf",
     "pdf report", "pdf document", "create pdf", "make a pdf",
     "pdf version", "pdf file", "save as pdf", "export as pdf",
-    "pdf export", "as pdf",
+    "pdf export", "as pdf", "in pdf", "pdf form", "pdf format",
+    "to pdf", "into a pdf", "in a pdf", "give me a pdf",
 }
 
 _COMPARISON_SIGNALS = {
@@ -140,6 +153,17 @@ code          — write, debug, explain, or refactor code; no web search needed.
 email         — the user wants to draft a professional email about a topic
                 (e.g. "draft an email to my manager about Stripe's funding").
 
+chart         — render data as a visual chart. Triggered whenever the user
+                mentions "chart", "graph", "plot", "visualize", or provides
+                raw numbers they want rendered as a bar/line/pie chart.
+
+pdf           — research a topic AND export the result as a downloadable PDF
+                document. Triggered by ANY mention of "pdf", "pdf report",
+                "in pdf form", "as a pdf", "pdf format", etc.
+                IMPORTANT: if the user asks for BOTH a comparison/report AND
+                a pdf, always choose pdf — the pdf pipeline includes the full
+                research and report writing, then exports to PDF.
+
 Reply with the mode name only — no explanation, no punctuation."""
 
 
@@ -163,11 +187,12 @@ def intent_router_node(state: AgentState) -> dict:
         logger.info("intent fast_path=document")
         return {"mode": "document"}
 
-    if any(sig in q_lower for sig in _PDF_SIGNALS):
+    # Regex word-boundary check is the primary gate; phrase-list is backup.
+    if _PDF_RE.search(question) or any(sig in q_lower for sig in _PDF_SIGNALS):
         logger.info("intent fast_path=pdf")
         return {"mode": "pdf"}
 
-    if any(sig in q_lower for sig in _CHART_SIGNALS):
+    if _CHART_RE.search(question) or any(sig in q_lower for sig in _CHART_SIGNALS):
         logger.info("intent fast_path=chart")
         return {"mode": "chart"}
 

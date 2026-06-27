@@ -130,7 +130,9 @@ def pdf_generator_node(state: AgentState) -> dict:
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    report_text  = state["messages"][-1].content
+    # report_content is set explicitly by report_writer so chart_writer's
+    # message (which becomes messages[-1]) doesn't shadow the report text.
+    report_text  = state.get("report_content") or state["messages"][-1].content
     query        = state.get("original_query", "Research Report")
     critique     = state.get("critique", "")
     fact_checks  = state.get("fact_check_results", []) or []

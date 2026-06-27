@@ -37,10 +37,9 @@ Example:
 
 
 class PlanResult(BaseModel):
+    # min_length/max_length omitted — Cerebras rejects those JSON schema keywords.
     steps: list[str] = Field(
         description="Numbered research steps (just the text, no numbers).",
-        min_length=1,
-        max_length=4,
     )
 
 

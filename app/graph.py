@@ -116,6 +116,7 @@ def route_after_synthesis(state: AgentState) -> str:
 
 
 _RESEARCH_PIPELINE_TARGETS = {
+    "research":          "research",          # validator retry loop
     "validator":         "validator",
     "synthesis":         "synthesis",
     "report_writer":     "report_writer",
@@ -123,6 +124,8 @@ _RESEARCH_PIPELINE_TARGETS = {
     "comparison_matrix": "comparison_matrix",
     "debate_writer":     "debate_writer",
     "email_drafter":     "email_drafter",
+    "chart_writer":      "chart_writer",
+    "suggestions":       "suggestions",
 }
 
 

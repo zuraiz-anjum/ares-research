@@ -65,7 +65,7 @@ async def report_writer_node(state: AgentState) -> dict:
             "## Conclusion\n"
             "The company is well-positioned for growth, though execution risk warrants monitoring."
         )
-        return {"messages": [AIMessage(content=mock)]}
+        return {"messages": [AIMessage(content=mock)], "report_content": mock}
 
     findings, _ = truncate_to_budget(findings, label="report_findings")
 
@@ -80,4 +80,7 @@ async def report_writer_node(state: AgentState) -> dict:
         HumanMessage(content=context),
     ])
     logger.info("report_writer_complete")
-    return {"messages": [AIMessage(content=response.content)]}
+    return {
+        "messages": [AIMessage(content=response.content)],
+        "report_content": response.content,
+    }

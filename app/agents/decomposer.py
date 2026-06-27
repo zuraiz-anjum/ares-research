@@ -45,10 +45,9 @@ Rules:
 
 
 class DecompositionResult(BaseModel):
+    # min_length/max_length omitted — Cerebras rejects those JSON schema keywords.
     queries: list[str] = Field(
         description="List of 1-3 independent search queries.",
-        min_length=1,
-        max_length=3,
     )
     is_compound: bool = Field(
         description="True if the question was decomposed into multiple queries."
@@ -83,6 +82,11 @@ def decomposer_node(state: AgentState) -> dict:
         SystemMessage(content=DECOMPOSER_SYSTEM_PROMPT),
         HumanMessage(content=full_question),
     ])
+
+    # Clamp to 1-3 queries (schema constraints removed for Cerebras compatibility).
+    if not result.queries:
+        result.queries = [full_question]
+    result.queries = result.queries[:3]
 
     # If the LLM detected sequential dependencies, collapse back to single query.
     if result.has_dependencies:

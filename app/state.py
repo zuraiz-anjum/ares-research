@@ -50,6 +50,10 @@ class AgentState(TypedDict, total=False):
     # Planner agent output.
     plan_steps: list[str]
 
+    # Report writer output (stored explicitly so pdf_generator can read it
+    # even after chart_writer appends its own message to state["messages"]).
+    report_content: str
+
     # Chart writer output.
     chart_url: str        # public path to the rendered PNG
 

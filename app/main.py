@@ -1,18 +1,20 @@
-"""FastAPI application.
-
-Exposes a JSON API plus a static chat UI:
+"""FastAPI application — Ares: Autonomous Research & Evidence System.
 
   POST /chat          -> start (or continue) a conversation turn (non-streaming)
   POST /resume        -> answer a clarifying question and continue
   GET  /chat/stream   -> SSE stream: node progress + synthesis tokens in real time
+  GET  /history       -> recent session list (last 50 queries)
   GET  /              -> the chat UI
 """
 
 import asyncio
 import json
 import logging
+import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,16 +38,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# In-memory session history (last 50 queries, survives only while server runs)
+_history: deque = deque(maxlen=50)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    import os
+    os.makedirs("static/charts", exist_ok=True)
+    os.makedirs("static/reports", exist_ok=True)
     validate_settings()
     logger.info("startup validation passed")
     yield
 
 
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(title="AI Workspace", lifespan=lifespan)
+app = FastAPI(title="Ares — Autonomous Research & Evidence System", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -140,11 +148,16 @@ async def resume(request: Request, req: ResumeRequest) -> dict:
     return await _run_async(Command(resume=req.clarification), req.thread_id)
 
 
+@app.get("/history")
+async def history() -> dict:
+    return {"sessions": list(_history)}
+
+
 # Graph nodes we want to surface as pipeline-step events in the SSE stream.
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
     "doc_agent", "data_analyst", "debate_writer", "synthesis", "report_writer",
-    "code_writer", "fact_checker", "critic", "suggestions",
+    "pdf_generator", "chart_writer", "code_writer", "fact_checker", "critic", "suggestions",
 }
 _STREAMING_NODES = {"synthesis", "report_writer", "data_analyst", "code_writer", "debate_writer"}
 
@@ -190,7 +203,11 @@ async def chat_stream(
         suggestions: list[str] = []
         fact_check_results: list = []
         plan_steps: list[str] = []
+        chart_url = ""
+        pdf_url = ""
+        detected_mode = "research"
         final_output: dict = {}
+        t_start = time.monotonic()
 
         try:
             async for event in graph.astream_events(inputs, config, version="v2"):
@@ -199,38 +216,40 @@ async def chat_stream(
                 meta = event.get("metadata", {})
 
                 if kind == "on_chain_start" and name in _GRAPH_NODES:
-                    # Filter to the node itself (not sub-calls inside the node).
                     if meta.get("langgraph_node") == name:
                         yield sse({"type": "node_start", "node": name})
 
                 elif kind == "on_chain_end":
                     node = meta.get("langgraph_node")
+                    out = event.get("data", {}).get("output", {}) or {}
                     if name == "decomposer" and node == "decomposer":
-                        out = event.get("data", {}).get("output", {})
                         sub_queries = out.get("sub_queries", [])
                         if sub_queries:
                             yield sse({"type": "decomposed", "queries": sub_queries})
                     elif name == "intent_router" and node == "intent_router":
-                        out = event.get("data", {}).get("output", {})
-                        mode = out.get("mode", "research")
-                        yield sse({"type": "mode", "mode": mode})
+                        detected_mode = out.get("mode", "research")
+                        yield sse({"type": "mode", "mode": detected_mode})
                     elif name == "critic" and node == "critic":
-                        out = event.get("data", {}).get("output", {})
                         critique = out.get("critique", "")
                         if critique:
                             yield sse({"type": "critique", "content": critique})
                     elif name == "planner" and node == "planner":
-                        out = event.get("data", {}).get("output", {})
                         plan_steps = out.get("plan_steps", [])
                         if plan_steps:
                             yield sse({"type": "plan_revealed", "steps": plan_steps})
                     elif name == "fact_checker" and node == "fact_checker":
-                        out = event.get("data", {}).get("output", {})
                         fact_check_results = out.get("fact_check_results", [])
                         if fact_check_results:
                             yield sse({"type": "fact_check", "results": fact_check_results})
+                    elif name == "chart_writer" and node == "chart_writer":
+                        chart_url = out.get("chart_url", "")
+                        if chart_url:
+                            yield sse({"type": "chart", "url": chart_url})
+                    elif name == "pdf_generator" and node == "pdf_generator":
+                        pdf_url = out.get("pdf_url", "")
+                        if pdf_url:
+                            yield sse({"type": "pdf_ready", "url": pdf_url})
                     elif name == "suggestions" and node == "suggestions":
-                        out = event.get("data", {}).get("output", {})
                         suggestions = out.get("suggestions", [])
                         if suggestions:
                             yield sse({"type": "suggestions", "questions": suggestions})
@@ -248,9 +267,7 @@ async def chat_stream(
             yield sse({"type": "error", "message": "An internal error occurred."})
             return
 
-        # Check for a pending interrupt (clarification request from the clarity agent).
-        # We always do this via get_state so we don't rely on the final event output
-        # structure, which differs between LangGraph versions.
+        # Check for a pending interrupt (clarification request).
         try:
             snapshot = await graph.aget_state(config)
             pending = [ipt for task in snapshot.tasks for ipt in (task.interrupts or [])]
@@ -262,14 +279,40 @@ async def chat_stream(
         except Exception:
             logger.warning(f"get_state_failed thread={_thread_id}")
 
-        # Fallback: if synthesis streamed nothing, pull from final graph output.
+        # Fallback: pull answer from final graph output if streaming produced nothing.
         if not full_answer and final_output.get("messages"):
             full_answer = final_output["messages"][-1].content
         if not sub_queries:
             sub_queries = final_output.get("sub_queries", [])
+        if not chart_url:
+            chart_url = final_output.get("chart_url", "")
+        if not pdf_url:
+            pdf_url = final_output.get("pdf_url", "")
+
+        latency_ms = int((time.monotonic() - t_start) * 1000)
+        # Approximate token count: total chars / 4 across all content exchanged.
+        all_text = message + full_answer + critique + " ".join(sub_queries)
+        token_count = len(all_text) // 4
+
+        import app.llm as _llm_mod
+        provider_names = [n for n, _ in _llm_mod._build_llms(0.2, False)]
+        provider_used = provider_names[min(_llm_mod._active_idx, len(provider_names)-1)] \
+                        if provider_names else "unknown"
+
+        # Record in session history
+        _history.appendleft({
+            "thread_id": _thread_id,
+            "query": message,
+            "mode": detected_mode,
+            "preview": (full_answer[:120] + "…") if len(full_answer) > 120 else full_answer,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "token_count": token_count,
+            "latency_ms": latency_ms,
+            "provider": provider_used,
+        })
 
         source_url = final_output.get("source_url", "")
-        logger.info(f"stream_complete thread={_thread_id}")
+        logger.info(f"stream_complete thread={_thread_id} tokens≈{token_count} provider={provider_used} ms={latency_ms}")
         yield sse({
             "type": "complete",
             "answer": full_answer,
@@ -280,6 +323,13 @@ async def chat_stream(
             "suggestions": suggestions,
             "fact_check_results": fact_check_results,
             "plan_steps": plan_steps,
+            "chart_url": chart_url,
+            "pdf_url": pdf_url,
+            "telemetry": {
+                "token_count": token_count,
+                "provider": provider_used,
+                "latency_ms": latency_ms,
+            },
         })
 
     return StreamingResponse(

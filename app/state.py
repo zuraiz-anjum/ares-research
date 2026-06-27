@@ -49,3 +49,14 @@ class AgentState(TypedDict, total=False):
 
     # Planner agent output.
     plan_steps: list[str]
+
+    # Chart writer output.
+    chart_url: str        # public path to the rendered PNG
+
+    # PDF generator output.
+    pdf_url: str          # public path to the generated PDF
+
+    # Request telemetry (populated in main.py after graph completes).
+    token_count: int      # approximate tokens used this turn
+    provider_used: str    # which LLM provider served the request
+    latency_ms: int       # wall-clock time for the graph run

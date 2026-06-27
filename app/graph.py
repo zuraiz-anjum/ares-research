@@ -6,12 +6,14 @@ Pipelines by mode (set by intent_router after clarity):
 
   research      → decomposer → research → validator* → synthesis → fact_checker → critic → suggestions → END
   report        → decomposer → research → validator* → report_writer → suggestions → END
+  pdf           → decomposer → research → validator* → report_writer → pdf_generator → suggestions → END
   data_analysis → decomposer → research → validator* → data_analyst → suggestions → END
   debate        → decomposer → research → validator* → debate_writer → suggestions → END
   plan          → planner → research → validator* → synthesis → fact_checker → critic → suggestions → END
   chat          → synthesis → suggestions → END
   document      → doc_agent → synthesis → suggestions → END
   code          → code_writer → suggestions → END
+  chart         → chart_writer → suggestions → END
 
   * validator only if confidence_score < threshold
 
@@ -21,6 +23,7 @@ suggestions is the universal terminal node across all pipelines.
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.chart_writer import chart_writer_node
 from app.agents.clarity import clarity_node
 from app.agents.code_writer import code_writer_node
 from app.agents.critic import critic_node
@@ -30,6 +33,7 @@ from app.agents.decomposer import decomposer_node
 from app.agents.doc_agent import doc_agent_node
 from app.agents.fact_checker import fact_checker_node
 from app.agents.intent_router import intent_router_node
+from app.agents.pdf_generator import pdf_generator_node
 from app.agents.planner import planner_node
 from app.agents.report_writer import report_writer_node
 from app.agents.research import research_node
@@ -43,7 +47,7 @@ from app.state import AgentState
 def _after_research_pipeline(state: AgentState) -> str:
     """After sufficient research, route to the appropriate output node."""
     mode = state.get("mode", "research")
-    if mode == "report":
+    if mode in ("report", "pdf"):
         return "report_writer"
     if mode == "data_analysis":
         return "data_analyst"
@@ -62,8 +66,17 @@ def route_after_intent(state: AgentState) -> str:
         return "code_writer"
     if mode == "plan":
         return "planner"
-    # research, report, data_analysis, debate → research pipeline
+    if mode == "chart":
+        return "chart_writer"
+    # research, report, pdf, data_analysis, debate → research pipeline
     return "decomposer"
+
+
+def route_after_report_writer(state: AgentState) -> str:
+    """PDF mode adds a pdf_generator step after report_writer."""
+    if state.get("mode") == "pdf":
+        return "pdf_generator"
+    return "suggestions"
 
 
 def route_after_research(state: AgentState) -> str:
@@ -99,32 +112,35 @@ _RESEARCH_PIPELINE_TARGETS = {
 def build_graph():
     builder = StateGraph(AgentState)
 
-    builder.add_node("clarity",       clarity_node)
-    builder.add_node("intent_router", intent_router_node)
-    builder.add_node("planner",       planner_node)
-    builder.add_node("decomposer",    decomposer_node)
-    builder.add_node("research",      research_node)
-    builder.add_node("validator",     validator_node)
-    builder.add_node("doc_agent",     doc_agent_node)
-    builder.add_node("data_analyst",  data_analyst_node)
-    builder.add_node("debate_writer", debate_writer_node)
-    builder.add_node("fact_checker",  fact_checker_node)
-    builder.add_node("synthesis",     synthesis_node)
-    builder.add_node("report_writer", report_writer_node)
-    builder.add_node("code_writer",   code_writer_node)
-    builder.add_node("critic",        critic_node)
-    builder.add_node("suggestions",   suggestions_node)
+    builder.add_node("clarity",        clarity_node)
+    builder.add_node("intent_router",  intent_router_node)
+    builder.add_node("planner",        planner_node)
+    builder.add_node("decomposer",     decomposer_node)
+    builder.add_node("research",       research_node)
+    builder.add_node("validator",      validator_node)
+    builder.add_node("doc_agent",      doc_agent_node)
+    builder.add_node("data_analyst",   data_analyst_node)
+    builder.add_node("debate_writer",  debate_writer_node)
+    builder.add_node("fact_checker",   fact_checker_node)
+    builder.add_node("synthesis",      synthesis_node)
+    builder.add_node("report_writer",  report_writer_node)
+    builder.add_node("pdf_generator",  pdf_generator_node)
+    builder.add_node("chart_writer",   chart_writer_node)
+    builder.add_node("code_writer",    code_writer_node)
+    builder.add_node("critic",         critic_node)
+    builder.add_node("suggestions",    suggestions_node)
 
     builder.add_edge(START, "clarity")
     builder.add_edge("clarity", "intent_router")
     builder.add_conditional_edges(
         "intent_router", route_after_intent,
         {
-            "decomposer":  "decomposer",
-            "synthesis":   "synthesis",
-            "doc_agent":   "doc_agent",
-            "code_writer": "code_writer",
-            "planner":     "planner",
+            "decomposer":   "decomposer",
+            "synthesis":    "synthesis",
+            "doc_agent":    "doc_agent",
+            "code_writer":  "code_writer",
+            "planner":      "planner",
+            "chart_writer": "chart_writer",
         },
     )
 
@@ -144,10 +160,15 @@ def build_graph():
     )
     builder.add_edge("fact_checker",  "critic")
     builder.add_edge("critic",        "suggestions")
-    builder.add_edge("report_writer", "suggestions")
-    builder.add_edge("data_analyst",  "suggestions")
-    builder.add_edge("debate_writer", "suggestions")
-    builder.add_edge("code_writer",   "suggestions")
+    builder.add_conditional_edges(
+        "report_writer", route_after_report_writer,
+        {"pdf_generator": "pdf_generator", "suggestions": "suggestions"},
+    )
+    builder.add_edge("pdf_generator",  "suggestions")
+    builder.add_edge("chart_writer",   "suggestions")
+    builder.add_edge("data_analyst",   "suggestions")
+    builder.add_edge("debate_writer",  "suggestions")
+    builder.add_edge("code_writer",    "suggestions")
     builder.add_edge("suggestions",   END)
 
     # MemorySaver supports all async methods (ainvoke, astream_events, aget_state).

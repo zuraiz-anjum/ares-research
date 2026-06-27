@@ -75,6 +75,20 @@ _PLAN_SIGNALS = {
     "action plan", "how do i achieve", "how do i get",
 }
 
+_CHART_SIGNALS = {
+    "chart", "bar chart", "line chart", "pie chart", "scatter plot",
+    "histogram", "make a chart", "create a chart", "draw a chart",
+    "show a chart", "plot this", "plot the", "visualize", "visualise",
+    "visualization", "graph this", "graph the data",
+}
+
+_PDF_SIGNALS = {
+    "generate pdf", "export pdf", "download pdf", "as a pdf",
+    "pdf report", "pdf document", "create pdf", "make a pdf",
+    "pdf version", "pdf file", "save as pdf", "export as pdf",
+    "pdf export", "as pdf",
+}
+
 ROUTER_SYSTEM_PROMPT = """You are the Intent Router in an AI workspace.
 Classify the user's request into exactly one mode.
 
@@ -105,7 +119,7 @@ Reply with the mode name only — no explanation, no punctuation."""
 
 
 class RouteResult(BaseModel):
-    mode: Literal["research", "report", "data_analysis", "debate", "plan", "chat", "document", "code"] = Field(
+    mode: Literal["research", "report", "data_analysis", "debate", "plan", "chat", "document", "code", "chart", "pdf"] = Field(
         description="Pipeline mode that best fits the user's request."
     )
 
@@ -120,31 +134,39 @@ def intent_router_node(state: AgentState) -> dict:
 
     # Fast paths — ordered from most specific to least.
     if _URL_RE.search(question):
-        logger.info(f"intent fast_path=document")
+        logger.info("intent fast_path=document")
         return {"mode": "document"}
 
+    if any(sig in q_lower for sig in _PDF_SIGNALS):
+        logger.info("intent fast_path=pdf")
+        return {"mode": "pdf"}
+
+    if any(sig in q_lower for sig in _CHART_SIGNALS):
+        logger.info("intent fast_path=chart")
+        return {"mode": "chart"}
+
     if any(sig in q_lower for sig in _CODE_SIGNALS):
-        logger.info(f"intent fast_path=code")
+        logger.info("intent fast_path=code")
         return {"mode": "code"}
 
     if any(sig in q_lower for sig in _REPORT_SIGNALS):
-        logger.info(f"intent fast_path=report")
+        logger.info("intent fast_path=report")
         return {"mode": "report"}
 
     if any(sig in q_lower for sig in _DATA_SIGNALS):
-        logger.info(f"intent fast_path=data_analysis")
+        logger.info("intent fast_path=data_analysis")
         return {"mode": "data_analysis"}
 
     if any(sig in q_lower for sig in _DEBATE_SIGNALS):
-        logger.info(f"intent fast_path=debate")
+        logger.info("intent fast_path=debate")
         return {"mode": "debate"}
 
     if any(sig in q_lower for sig in _PLAN_SIGNALS):
-        logger.info(f"intent fast_path=plan")
+        logger.info("intent fast_path=plan")
         return {"mode": "plan"}
 
     if any(sig in q_lower for sig in _RESEARCH_SIGNALS):
-        logger.info(f"intent fast_path=research")
+        logger.info("intent fast_path=research")
         return {"mode": "research"}
 
     # LLM for ambiguous cases.

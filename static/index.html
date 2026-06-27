@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Workspace</title>
+  <title>Ares — Autonomous Research & Evidence System</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -607,6 +607,162 @@
       to   { opacity: 1; transform: translateY(0); }
     }
     .msg-group { animation: fadeUp 0.2s ease; }
+
+    /* ── App layout with sidebar ────────────────── */
+    #app-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    #main-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 32px 24px 16px;
+      scroll-behavior: smooth;
+    }
+
+    /* ── History sidebar ────────────────────────── */
+    #sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 14px 14px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+    }
+
+    .sidebar-refresh {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .sidebar-refresh:hover { color: var(--accent); }
+
+    #history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    #history-list::-webkit-scrollbar { width: 3px; }
+    #history-list::-webkit-scrollbar-thumb { background: var(--border2); }
+
+    .sidebar-empty {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 24px 12px;
+    }
+
+    .history-item {
+      padding: 9px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.12s;
+    }
+    .history-item:hover { background: var(--surface2); }
+
+    .history-item-query {
+      font-size: 11.5px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+
+    .history-item-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .history-mode-badge {
+      background: var(--tag-bg);
+      border: 1px solid var(--tag-border);
+      color: var(--tag-text);
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    /* ── Telemetry badge ────────────────────────── */
+    .telemetry-badge {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      padding: 3px 10px;
+      border-radius: 20px;
+      letter-spacing: 0.2px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Chart display ──────────────────────────── */
+    .chart-section {
+      margin-top: 14px;
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #0f0f1a;
+    }
+
+    .chart-section img {
+      width: 100%;
+      display: block;
+    }
+
+    /* ── PDF download ───────────────────────────── */
+    .pdf-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 14px;
+      padding: 9px 18px;
+      background: linear-gradient(135deg, #c0392b, #e74c3c);
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      transition: opacity 0.15s, transform 0.15s;
+      box-shadow: 0 4px 16px rgba(192,57,43,0.3);
+    }
+    .pdf-download:hover { opacity: 0.9; transform: translateY(-1px); }
   </style>
 </head>
 <body>
@@ -614,8 +770,8 @@
 <header>
   <div class="header-left">
     <div class="logo">⚡</div>
-    <span class="header-title">AI Workspace</span>
-    <span class="header-badge">Multi-Agent · LangGraph</span>
+    <span class="header-title">Ares</span>
+    <span class="header-badge">Autonomous Research &amp; Evidence</span>
   </div>
   <div class="pipeline" id="pipeline">
     <div class="step" data-node="clarity"><div class="step-dot"></div>Clarity</div>
@@ -631,31 +787,46 @@
     <div class="step" data-node="critic"><div class="step-dot"></div>Critique</div>
     <span id="mode-badge" class="mode-badge" style="display:none"></span>
   </div>
+  <div id="telemetry-badge" class="telemetry-badge" style="display:none"></div>
 </header>
 
-<div id="chat">
-  <div id="chat-inner">
-    <div class="empty" id="empty-state">
-      <div class="empty-glow">⚡</div>
-      <h2>AI Workspace</h2>
-      <p>Research companies, compare competitors, and get structured answers — powered by a multi-agent pipeline running in parallel.</p>
-      <div class="chips">
-        <button class="chip" onclick="fill(this)">Pros and cons of investing in Stripe right now</button>
-        <button class="chip" onclick="fill(this)">Write a report on Anthropic</button>
-        <button class="chip" onclick="fill(this)">Write a binary search in Python</button>
-        <button class="chip" onclick="fill(this)">Create a plan to learn LangGraph in 30 days</button>
+<div id="app-body">
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">History</span>
+      <button class="sidebar-refresh" onclick="loadHistory()" title="Refresh">↻</button>
+    </div>
+    <div id="history-list"><div class="sidebar-empty">No sessions yet</div></div>
+  </div>
+
+  <div id="main-area">
+    <div id="chat">
+      <div id="chat-inner">
+        <div class="empty" id="empty-state">
+          <div class="empty-glow">⚡</div>
+          <h2>Ares</h2>
+          <p>Autonomous Research &amp; Evidence System — fact-checked reports, data visualizations, and PDF exports from a single query.</p>
+          <div class="chips">
+            <button class="chip" onclick="fill(this)">Pros and cons of investing in Stripe right now</button>
+            <button class="chip" onclick="fill(this)">Write a PDF report on Anthropic's competitive position</button>
+            <button class="chip" onclick="fill(this)">Bar chart: Apple $383B, Google $307B, Meta $116B revenue</button>
+            <button class="chip" onclick="fill(this)">Create a plan to learn LangGraph in 30 days</button>
+            <button class="chip" onclick="fill(this)">Write a binary search function in Python</button>
+            <button class="chip" onclick="fill(this)">Debate: Is AI replacing software engineers?</button>
+          </div>
+        </div>
       </div>
     </div>
+
+    <footer>
+      <div class="input-row">
+        <input id="input" placeholder="Research a company, chart data, generate a PDF report…" autocomplete="off" />
+        <button class="send-btn" id="send">Send</button>
+      </div>
+      <div class="footer-hint">Try "Bar chart of OpenAI vs Anthropic vs Mistral funding" · "Generate a PDF report on Tesla" · "Debate: Python vs Go"</div>
+    </footer>
   </div>
 </div>
-
-<footer>
-  <div class="input-row">
-    <input id="input" placeholder="Ask me anything..." autocomplete="off" />
-    <button class="send-btn" id="send">Send</button>
-  </div>
-  <div class="footer-hint">Try "Compare Stripe and Brex" to see parallel query decomposition in action</div>
-</footer>
 
 <script>
   marked.setOptions({ breaks: true, gfm: true });
@@ -670,12 +841,14 @@
   const PIPELINE_CONFIGS = {
     research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
+    pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "pdf_generator", "suggestions"],
     data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
     plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
     document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
     code:          ["clarity", "intent_router", "code_writer", "suggestions"],
+    chart:         ["clarity", "intent_router", "chart_writer", "suggestions"],
   };
 
   const NODE_LABELS = {
@@ -684,6 +857,7 @@
     report_writer: "Report", doc_agent: "Document", validator: "Validate",
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
+    chart_writer: "Chart", pdf_generator: "PDF",
   };
 
   // Streaming nodes — the ones whose LLM tokens go into the main bubble.
@@ -695,6 +869,41 @@
   let activeEs = null;
   let activePipeline = ["clarity", "intent_router"]; // updated on mode event
   let currentMode = "research";
+  let pendingChartUrl = "";
+  let pendingPdfUrl = "";
+
+  // ── Session history sidebar ───────────────────────────────────────────
+
+  async function loadHistory() {
+    try {
+      const res = await fetch("/history");
+      const data = await res.json();
+      const list = document.getElementById("history-list");
+      if (!data.sessions?.length) {
+        list.innerHTML = '<div class="sidebar-empty">No sessions yet</div>';
+        return;
+      }
+      list.innerHTML = data.sessions.map(s => {
+        const d = new Date(s.timestamp);
+        const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        return `<div class="history-item" onclick="fillFromHistory(${JSON.stringify(s.query).replace(/</g,'&lt;')})">
+          <div class="history-item-query">${escapeHtml(s.query)}</div>
+          <div class="history-item-meta">
+            <span class="history-mode-badge">${s.mode}</span>
+            <span>${time}</span>
+            <span>~${s.token_count}tok</span>
+          </div>
+        </div>`;
+      }).join("");
+    } catch (e) { console.error("history load failed", e); }
+  }
+
+  function fillFromHistory(query) {
+    inputEl.value = query;
+    inputEl.focus();
+  }
+
+  loadHistory();
 
   // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -743,7 +952,8 @@
     badge.className = `mode-badge ${badgeClass}`;
     const modeText = {
       research: "RESEARCH", report: "REPORT", data_analysis: "DATA",
-      debate: "DEBATE", plan: "PLAN", chat: "CHAT", document: "DOC", code: "CODE",
+      debate: "DEBATE", plan: "PLAN", chat: "CHAT", document: "DOC",
+      code: "CODE", chart: "CHART", pdf: "PDF",
     };
     badge.textContent = modeText[mode] || mode.toUpperCase();
     pipelineEl.appendChild(badge);
@@ -881,6 +1091,37 @@
 
   function escapeHtml(s) {
     return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  function appendChart(group, url) {
+    if (!url) return;
+    const section = document.createElement("div");
+    section.className = "chart-section";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = "Generated chart";
+    img.loading = "lazy";
+    section.appendChild(img);
+    group.appendChild(section);
+  }
+
+  function appendPdfDownload(group, url) {
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.download = "";
+    a.className = "pdf-download";
+    a.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg> Download PDF Report`;
+    group.appendChild(a);
+  }
+
+  function setTelemetry(t) {
+    if (!t) return;
+    const el = document.getElementById("telemetry-badge");
+    if (!el) return;
+    el.style.display = "block";
+    el.textContent = `~${t.token_count.toLocaleString()} tok · ${t.provider} · ${(t.latency_ms/1000).toFixed(1)}s`;
   }
 
   function appendFactCheck(group, results) {
@@ -1097,7 +1338,6 @@
 
         case "plan_revealed": {
           pendingPlan = data.steps;
-          // If the bot group already exists (e.g. fast response), insert immediately.
           if (botGroup && data.steps?.length) {
             appendPlan(botGroup, data.steps);
             pendingPlan = null;
@@ -1110,28 +1350,54 @@
           break;
         }
 
+        case "chart": {
+          pendingChartUrl = data.url || "";
+          if (botGroup && pendingChartUrl) {
+            appendChart(botGroup, pendingChartUrl);
+            pendingChartUrl = "";
+          }
+          break;
+        }
+
+        case "pdf_ready": {
+          pendingPdfUrl = data.url || "";
+          if (botGroup && pendingPdfUrl) {
+            appendPdfDownload(botGroup, pendingPdfUrl);
+            pendingPdfUrl = "";
+          }
+          break;
+        }
+
         case "complete": {
           threadId = data.thread_id;
           awaitingClarification = false;
           donePipeline();
+          setTelemetry(data.telemetry);
 
+          const targetGroup = botGroup;
           if (botBubble) {
             botBubble.classList.remove("streaming-cursor");
             botBubble.innerHTML = marked.parse(data.answer || rawContent);
-            if (data.sub_queries?.length > 1 && !botGroup.querySelector(".sub-queries")) {
-              appendSubQueries(botGroup, data.sub_queries);
+            if (data.sub_queries?.length > 1 && !targetGroup.querySelector(".sub-queries")) {
+              appendSubQueries(targetGroup, data.sub_queries);
             }
-            if (data.source_url) appendSourceUrl(botGroup, data.source_url);
-            if (data.critique && !botGroup.querySelector(".critique-section")) {
-              appendCritique(botGroup, data.critique);
+            if (data.source_url) appendSourceUrl(targetGroup, data.source_url);
+            if (data.critique && !targetGroup.querySelector(".critique-section")) {
+              appendCritique(targetGroup, data.critique);
             }
-            botGroup.querySelector(".critique-spinner")?.remove();
-            // Fallbacks for events that may have been missed.
-            if (data.fact_check_results?.length && !botGroup.querySelector(".fact-check-section")) {
-              appendFactCheck(botGroup, data.fact_check_results);
+            targetGroup.querySelector(".critique-spinner")?.remove();
+            if (data.fact_check_results?.length && !targetGroup.querySelector(".fact-check-section")) {
+              appendFactCheck(targetGroup, data.fact_check_results);
             }
-            if (data.suggestions?.length && !botGroup.querySelector(".followup-wrap")) {
-              appendSuggestions(botGroup, data.suggestions);
+            // Chart/PDF may arrive via their own events (already appended) or only in complete.
+            if (data.chart_url && !targetGroup.querySelector(".chart-section")) {
+              appendChart(targetGroup, data.chart_url);
+            }
+            if (data.pdf_url && !targetGroup.querySelector(".pdf-download")) {
+              appendPdfDownload(targetGroup, data.pdf_url);
+            }
+            if (data.suggestions?.length && !targetGroup.querySelector(".followup-wrap")) {
+              appendSuggestions(targetGroup, data.suggestions);
             }
           } else {
             const { group } = addMsg(data.answer || "(no answer)", "bot", data.sub_queries);
@@ -1139,10 +1405,13 @@
             if (data.source_url) appendSourceUrl(group, data.source_url);
             if (data.fact_check_results?.length) appendFactCheck(group, data.fact_check_results);
             if (data.critique) appendCritique(group, data.critique);
+            if (data.chart_url) appendChart(group, data.chart_url);
+            if (data.pdf_url) appendPdfDownload(group, data.pdf_url);
             if (data.suggestions?.length) appendSuggestions(group, data.suggestions);
           }
-          // Syntax-highlight any code blocks in the rendered message.
           if (typeof Prism !== "undefined") Prism.highlightAllUnder(botGroup || inner);
+          // Refresh history sidebar after each completed turn.
+          loadHistory();
           cleanup();
           break;
         }
@@ -1175,6 +1444,9 @@
     function cleanup() {
       es.close();
       activeEs = null;
+      pendingPlan = null;
+      pendingChartUrl = "";
+      pendingPdfUrl = "";
       sendBtn.disabled = false;
       inputEl.focus();
     }

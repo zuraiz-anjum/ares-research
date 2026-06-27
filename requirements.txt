@@ -15,3 +15,5 @@ langgraph-checkpoint-sqlite>=2.0.0
 aiosqlite>=0.20.0
 langchain-groq>=0.2.0
 langchain-google-genai>=2.0.0
+matplotlib>=3.8.0
+reportlab>=4.0.0

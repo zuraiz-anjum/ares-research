@@ -164,12 +164,27 @@ def _render(spec: ChartSpec) -> str:
 
 
 def chart_writer_node(state: AgentState) -> dict:
-    question = state.get("original_query") or state["messages"][-1].content
+    mode = state.get("mode", "chart")
+
+    if mode in ("data_analysis", "comparison"):
+        # Derive chart data from the previous agent's structured output (the
+        # data_analyst or comparison_matrix markdown table already in messages).
+        prior_output = next(
+            (m.content for m in reversed(state["messages"])
+             if hasattr(m, "content") and m.content),
+            state.get("original_query", ""),
+        )
+        prompt_content = (
+            f"Original question: {state.get('original_query', '')}\n\n"
+            f"Extract the numerical data from this analysis and produce a chart:\n\n{prior_output}"
+        )
+    else:
+        prompt_content = state.get("original_query") or state["messages"][-1].content
 
     llm = get_llm(temperature=0).with_structured_output(ChartSpec)
     spec: ChartSpec = llm.invoke([
         SystemMessage(content=CHART_SYSTEM_PROMPT),
-        HumanMessage(content=question),
+        HumanMessage(content=prompt_content),
     ])
 
     try:

@@ -3,7 +3,7 @@
   POST /chat          -> start (or continue) a conversation turn (non-streaming)
   POST /resume        -> answer a clarifying question and continue
   GET  /chat/stream   -> SSE stream: node progress + synthesis tokens in real time
-  GET  /history       -> recent session list (last 50 queries)
+  GET  /history       -> recent session list (last 50 queries, persisted to SQLite)
   GET  /              -> the chat UI
 """
 
@@ -16,6 +16,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import aiosqlite
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -38,8 +39,62 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# In-memory session history (last 50 queries, survives only while server runs)
+DB_PATH = "ares_history.db"
+
+# In-memory mirror of the last 50 sessions — seeded from SQLite on startup.
 _history: deque = deque(maxlen=50)
+
+
+async def _init_db() -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id  TEXT,
+                query      TEXT,
+                mode       TEXT,
+                preview    TEXT,
+                timestamp  TEXT,
+                token_count INTEGER DEFAULT 0,
+                latency_ms  INTEGER DEFAULT 0,
+                provider    TEXT DEFAULT 'unknown'
+            )
+        """)
+        await db.commit()
+        cursor = await db.execute(
+            "SELECT thread_id, query, mode, preview, timestamp, "
+            "token_count, latency_ms, provider "
+            "FROM sessions ORDER BY id DESC LIMIT 50"
+        )
+        rows = await cursor.fetchall()
+    # Oldest first so appendleft makes the most-recent appear at top.
+    for row in reversed(rows):
+        _history.appendleft({
+            "thread_id":   row[0],
+            "query":       row[1],
+            "mode":        row[2],
+            "preview":     row[3],
+            "timestamp":   row[4],
+            "token_count": row[5],
+            "latency_ms":  row[6],
+            "provider":    row[7],
+        })
+    logger.info(f"history_loaded count={len(rows)}")
+
+
+async def _save_session(session: dict) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO sessions "
+            "(thread_id, query, mode, preview, timestamp, token_count, latency_ms, provider) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                session["thread_id"], session["query"],  session["mode"],
+                session["preview"],   session["timestamp"], session["token_count"],
+                session["latency_ms"], session["provider"],
+            ),
+        )
+        await db.commit()
 
 
 @asynccontextmanager
@@ -47,6 +102,7 @@ async def lifespan(_: FastAPI):
     import os
     os.makedirs("static/charts", exist_ok=True)
     os.makedirs("static/reports", exist_ok=True)
+    await _init_db()
     validate_settings()
     logger.info("startup validation passed")
     yield
@@ -100,8 +156,6 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         if err:
             return err
     try:
-        # ainvoke instead of asyncio.to_thread(graph.invoke) because several
-        # nodes (synthesis, report_writer, etc.) are async functions.
         result = await graph.ainvoke(inputs, config)
     except GraphInterrupt as exc:
         question = "Could you clarify your request?"
@@ -118,7 +172,6 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         logger.exception(f"graph_error thread={thread_id}")
         return {"status": "error", "answer": "An internal error occurred. Please try again.", "thread_id": thread_id}
 
-    # Fallback for older LangGraph versions that return __interrupt__ in the dict.
     if isinstance(result, dict) and result.get("__interrupt__"):
         interrupt = result["__interrupt__"][0]
         question = interrupt.value.get("question", "Could you clarify your request?")
@@ -131,7 +184,11 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
     source_url = result.get("source_url", "")
     suggestions = result.get("suggestions", [])
     logger.info(f"request_complete thread={thread_id}")
-    return {"status": "complete", "answer": answer, "thread_id": thread_id, "sub_queries": sub_queries, "critique": critique, "source_url": source_url, "suggestions": suggestions}
+    return {
+        "status": "complete", "answer": answer, "thread_id": thread_id,
+        "sub_queries": sub_queries, "critique": critique,
+        "source_url": source_url, "suggestions": suggestions,
+    }
 
 
 @app.post("/chat")
@@ -153,13 +210,17 @@ async def history() -> dict:
     return {"sessions": list(_history)}
 
 
-# Graph nodes we want to surface as pipeline-step events in the SSE stream.
+# Graph nodes to surface as pipeline-step events in the SSE stream.
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
-    "doc_agent", "data_analyst", "debate_writer", "synthesis", "report_writer",
-    "pdf_generator", "chart_writer", "code_writer", "fact_checker", "critic", "suggestions",
+    "doc_agent", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
+    "report_writer", "pdf_generator", "chart_writer", "code_writer", "email_drafter",
+    "fact_checker", "critic", "suggestions",
 }
-_STREAMING_NODES = {"synthesis", "report_writer", "data_analyst", "code_writer", "debate_writer"}
+_STREAMING_NODES = {
+    "synthesis", "report_writer", "data_analyst", "code_writer",
+    "debate_writer", "comparison_matrix", "email_drafter",
+}
 
 
 @app.get("/chat/stream")
@@ -179,8 +240,6 @@ async def chat_stream(
             yield sse({"type": "error", "message": "Your query is too long. Please shorten it."})
             return
 
-        # Fast mock path: simulate events with small delays so the UI is testable
-        # without live API keys.
         if settings.mock_mode:
             for node in ("clarity", "decomposer", "research", "synthesis"):
                 yield sse({"type": "node_start", "node": node})
@@ -201,6 +260,7 @@ async def chat_stream(
         sub_queries: list[str] = []
         critique = ""
         suggestions: list[str] = []
+        sources: list[dict] = []
         fact_check_results: list = []
         plan_steps: list[str] = []
         chart_url = ""
@@ -229,6 +289,10 @@ async def chat_stream(
                     elif name == "intent_router" and node == "intent_router":
                         detected_mode = out.get("mode", "research")
                         yield sse({"type": "mode", "mode": detected_mode})
+                    elif name == "research" and node == "research":
+                        sources = out.get("sources", [])
+                        if sources:
+                            yield sse({"type": "sources", "items": sources})
                     elif name == "critic" and node == "critic":
                         critique = out.get("critique", "")
                         if critique:
@@ -284,51 +348,59 @@ async def chat_stream(
             full_answer = final_output["messages"][-1].content
         if not sub_queries:
             sub_queries = final_output.get("sub_queries", [])
+        if not sources:
+            sources = final_output.get("sources", [])
         if not chart_url:
             chart_url = final_output.get("chart_url", "")
         if not pdf_url:
             pdf_url = final_output.get("pdf_url", "")
 
         latency_ms = int((time.monotonic() - t_start) * 1000)
-        # Approximate token count: total chars / 4 across all content exchanged.
         all_text = message + full_answer + critique + " ".join(sub_queries)
         token_count = len(all_text) // 4
 
         import app.llm as _llm_mod
         provider_names = [n for n, _ in _llm_mod._build_llms(0.2, False)]
-        provider_used = provider_names[min(_llm_mod._active_idx, len(provider_names)-1)] \
-                        if provider_names else "unknown"
+        provider_used = (
+            provider_names[min(_llm_mod._active_idx, len(provider_names) - 1)]
+            if provider_names else "unknown"
+        )
 
-        # Record in session history
-        _history.appendleft({
-            "thread_id": _thread_id,
-            "query": message,
-            "mode": detected_mode,
-            "preview": (full_answer[:120] + "…") if len(full_answer) > 120 else full_answer,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+        session = {
+            "thread_id":   _thread_id,
+            "query":       message,
+            "mode":        detected_mode,
+            "preview":     (full_answer[:120] + "…") if len(full_answer) > 120 else full_answer,
+            "timestamp":   datetime.now(timezone.utc).isoformat(),
             "token_count": token_count,
-            "latency_ms": latency_ms,
-            "provider": provider_used,
-        })
+            "latency_ms":  latency_ms,
+            "provider":    provider_used,
+        }
+        _history.appendleft(session)
+        asyncio.create_task(_save_session(session))
 
         source_url = final_output.get("source_url", "")
-        logger.info(f"stream_complete thread={_thread_id} tokens≈{token_count} provider={provider_used} ms={latency_ms}")
+        logger.info(
+            f"stream_complete thread={_thread_id} "
+            f"tokens≈{token_count} provider={provider_used} ms={latency_ms}"
+        )
         yield sse({
-            "type": "complete",
-            "answer": full_answer,
-            "thread_id": _thread_id,
-            "sub_queries": sub_queries,
-            "critique": critique,
-            "source_url": source_url,
-            "suggestions": suggestions,
+            "type":               "complete",
+            "answer":             full_answer,
+            "thread_id":          _thread_id,
+            "sub_queries":        sub_queries,
+            "critique":           critique,
+            "source_url":         source_url,
+            "suggestions":        suggestions,
+            "sources":            sources,
             "fact_check_results": fact_check_results,
-            "plan_steps": plan_steps,
-            "chart_url": chart_url,
-            "pdf_url": pdf_url,
+            "plan_steps":         plan_steps,
+            "chart_url":          chart_url,
+            "pdf_url":            pdf_url,
             "telemetry": {
                 "token_count": token_count,
-                "provider": provider_used,
-                "latency_ms": latency_ms,
+                "provider":    provider_used,
+                "latency_ms":  latency_ms,
             },
         })
 
@@ -336,9 +408,9 @@ async def chat_stream(
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control":    "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
+            "Connection":       "keep-alive",
         },
     )
 

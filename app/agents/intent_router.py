@@ -7,12 +7,16 @@ Modes
 -----
 research      Company/market research — conversational answer + fact-check + critique.
 report        Same research pipeline but formatted as a structured multi-section report.
-data_analysis Research for numerical comparison — outputs tables + key metrics.
+data_analysis Research for numerical comparison — outputs tables + key metrics + auto-chart.
+comparison    Side-by-side comparison matrix of 2+ entities — auto-chart included.
 debate        Research + structured FOR vs AGAINST analysis with a verdict.
 plan          Complex multi-step task — Planner creates a visible research plan first.
 chat          Answered from model knowledge, no web search needed.
 document      User supplied a URL; fetch and analyse that document.
 code          Write, debug, or explain code — no web search needed.
+email         Research a topic, then draft a ready-to-send professional email.
+chart         Render user-supplied data as a matplotlib chart (no web search).
+pdf           Full research pipeline + export to a styled PDF document.
 """
 
 import logging
@@ -89,6 +93,20 @@ _PDF_SIGNALS = {
     "pdf export", "as pdf",
 }
 
+_COMPARISON_SIGNALS = {
+    "vs ", "versus", "compare ", "side by side", "side-by-side",
+    "compared to", "compared with", "difference between", "similarities between",
+    "better: ", "which is better", "head to head", "head-to-head",
+    "x vs y", "a vs b", "pros and cons of both",
+}
+
+_EMAIL_SIGNALS = {
+    "draft an email", "write an email", "draft email", "write email",
+    "compose an email", "compose email", "email about", "email to",
+    "email summarizing", "email summarising", "email draft",
+    "send an email", "prepare an email", "craft an email",
+}
+
 ROUTER_SYSTEM_PROMPT = """You are the Intent Router in an AI workspace.
 Classify the user's request into exactly one mode.
 
@@ -100,6 +118,10 @@ report        — same as research but the user explicitly wants a formatted,
 
 data_analysis — same as research but the user wants numbers, metrics, tables,
                 or statistical comparisons (e.g. "compare the numbers for X and Y").
+
+comparison    — side-by-side structured comparison of 2+ named entities (companies,
+                tools, products) with a winner verdict (e.g. "Stripe vs Braintree",
+                "compare OpenAI and Anthropic", "Tesla versus Rivian").
 
 debate        — the user wants a balanced FOR vs AGAINST analysis of a topic,
                 decision, or comparison (e.g. "pros and cons", "should I", "steelman").
@@ -115,13 +137,17 @@ document      — the user provided a URL or wants a specific web page analysed.
 
 code          — write, debug, explain, or refactor code; no web search needed.
 
+email         — the user wants to draft a professional email about a topic
+                (e.g. "draft an email to my manager about Stripe's funding").
+
 Reply with the mode name only — no explanation, no punctuation."""
 
 
 class RouteResult(BaseModel):
-    mode: Literal["research", "report", "data_analysis", "debate", "plan", "chat", "document", "code", "chart", "pdf"] = Field(
-        description="Pipeline mode that best fits the user's request."
-    )
+    mode: Literal[
+        "research", "report", "data_analysis", "comparison", "debate",
+        "plan", "chat", "document", "code", "email", "chart", "pdf"
+    ] = Field(description="Pipeline mode that best fits the user's request.")
 
 
 def intent_router_node(state: AgentState) -> dict:
@@ -145,6 +171,10 @@ def intent_router_node(state: AgentState) -> dict:
         logger.info("intent fast_path=chart")
         return {"mode": "chart"}
 
+    if any(sig in q_lower for sig in _EMAIL_SIGNALS):
+        logger.info("intent fast_path=email")
+        return {"mode": "email"}
+
     if any(sig in q_lower for sig in _CODE_SIGNALS):
         logger.info("intent fast_path=code")
         return {"mode": "code"}
@@ -152,6 +182,10 @@ def intent_router_node(state: AgentState) -> dict:
     if any(sig in q_lower for sig in _REPORT_SIGNALS):
         logger.info("intent fast_path=report")
         return {"mode": "report"}
+
+    if any(sig in q_lower for sig in _COMPARISON_SIGNALS):
+        logger.info("intent fast_path=comparison")
+        return {"mode": "comparison"}
 
     if any(sig in q_lower for sig in _DATA_SIGNALS):
         logger.info("intent fast_path=data_analysis")

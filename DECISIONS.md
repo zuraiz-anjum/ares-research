@@ -121,7 +121,73 @@
 **Trade-off:** 20/min is generous for a research assistant — a real user typing questions won't hit it. It protects against accidental loops and basic abuse without adding authentication complexity. The limit is applied per IP which breaks in shared NAT environments (all users behind one IP share the limit), but that's acceptable for this scale.
 
 
-## 12. Spec ambiguities I noticed
+## 13. Multi-provider LLM fallback chain
+
+**Context:** Groq's free tier has a daily token limit. Once hit, all requests fail until midnight UTC.
+
+**Options:** Notify the user and give up, retry with exponential backoff (still same provider), fall through to a secondary provider.
+
+**Choice:** `_FallbackLLM` wrapper class with a module-level `_active_idx` integer tracking which provider to use. Chain: Groq (llama-3.3-70b) → Cerebras (gpt-oss-120b, via OpenAI-compatible endpoint) → Gemini (gemini-2.0-flash) → OpenRouter.
+
+**Trade-off:** The global `_active_idx` persists across requests within a process — once Groq fails, every subsequent request starts at Cerebras without retrying Groq. This is correct behaviour for a daily rate limit (retrying Groq every request would add latency for no benefit). The downside is that if Groq resets at midnight, the fallback won't revert automatically until the server restarts. Cerebras is placed before Gemini because Gemini's `tenacity` retry logic blocks the thread for 30+ seconds on quota errors, making it a worse user experience even when Cerebras is available.
+
+
+## 14. Cerebras via ChatOpenAI instead of ChatCerebras
+
+**Context:** `langchain-cerebras` mangles model names — `ChatCerebras(model="llama3.3-70b")` sends `llama-3.3-70b` to the API which returns 404 because the model slug doesn't exist on this key.
+
+**Options:** Use `ChatCerebras` and figure out the correct slug, use `ChatOpenAI` with `base_url` pointing to Cerebras's OpenAI-compatible endpoint.
+
+**Choice:** `ChatOpenAI(base_url="https://api.cerebras.ai/v1", api_key=..., model="gpt-oss-120b")`.
+
+**Trade-off:** This bypasses the Cerebras LangChain integration entirely and treats Cerebras as a generic OpenAI-compatible provider. It's more fragile if Cerebras changes their API contract, but it works reliably right now and avoids the model-name mangling bug in the official integration.
+
+
+## 15. Matplotlib Agg backend for chart rendering
+
+**Context:** Matplotlib's default backends (TkAgg, Qt5Agg) require a display/GUI environment. Servers typically have no display, causing `cannot connect to X server` errors.
+
+**Options:** Use Agg (non-interactive raster backend), use Cairo, use Plotly (HTML/JS output).
+
+**Choice:** `matplotlib.use("Agg")` set at module level before any plt import.
+
+**Trade-off:** Agg is the standard non-interactive backend for server-side rendering. It produces PNG files suitable for web display. The downside is no interactivity (zoom, hover) — charts are static images. Plotly would give interactive charts but requires either a JS runtime in the backend or shipping raw JSON to the frontend and rendering there, which adds complexity. Static PNGs are sufficient for a research assistant where charts are generated on demand.
+
+
+## 16. ReportLab for PDF generation instead of WeasyPrint or Puppeteer
+
+**Context:** PDF generation from HTML (WeasyPrint, Puppeteer) typically requires system libraries (GTK, Chromium) that are painful to install in Docker and on Windows.
+
+**Options:** WeasyPrint (CSS → PDF, needs libpango, libcairo), Puppeteer (headless Chrome), ReportLab (pure Python, programmatic PDF).
+
+**Choice:** ReportLab with `SimpleDocTemplate` and custom `Paragraph` flowables.
+
+**Trade-off:** ReportLab requires more code to lay out the document programmatically rather than writing CSS, but it has zero system dependencies — it's pure Python. This makes Docker images simpler and the setup portable across Windows, macOS, and Linux. The custom `_md_to_flowables()` function converts Markdown headings and bullets to ReportLab elements, which handles ~90% of what research reports need.
+
+
+## 17. SQLite for session history persistence
+
+**Context:** The in-memory `deque` for session history was lost on every server restart, making the history sidebar useless after a redeployment or crash.
+
+**Options:** Keep in-memory only, write to SQLite via `aiosqlite`, use Redis, use PostgreSQL.
+
+**Choice:** `aiosqlite` with a local `ares_history.db` file. On startup, the last 50 sessions are loaded into the deque. Each new session is written to SQLite asynchronously via `asyncio.create_task()` so it doesn't block the SSE response.
+
+**Trade-off:** SQLite has limited write concurrency (single writer), but at the usage patterns of a personal research assistant this is never a bottleneck. The async write via `create_task` means there's a tiny window where the server could crash between a session completing and the DB write finishing, losing that one entry — acceptable for a history sidebar where losing one entry is not catastrophic. For billing-critical data, you'd want a synchronous write or a proper queue.
+
+
+## 18. Source citations: pass-through to frontend, not embedded in answer text
+
+**Context:** Tavily returns source URLs for each search result. We could embed them as `[1](url)` footnotes in the LLM's answer text, or pass them separately to the frontend.
+
+**Options:** Instruct the LLM to cite sources inline, post-process the answer to append footnotes, pass sources as a separate SSE event and render them in the UI.
+
+**Choice:** Collect all source `{title, url}` pairs in `research_node`, emit them as a `"sources"` SSE event, render as a collapsible "Sources" section below the answer.
+
+**Trade-off:** Embedding citations in the LLM's answer text is unreliable — LLMs hallucinate URLs and format them inconsistently. Passing sources separately is 100% accurate (they come directly from Tavily, not the LLM) and keeps the answer text clean. The collapsible UI lets power users verify sources without cluttering the default view.
+
+
+## 20. Spec ambiguities I noticed
 
 **README says OPENAI_API_KEY, brief says you can swap providers.** I swapped to Groq and documented it here rather than modifying the original README, which is the baseline artifact.
 

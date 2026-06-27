@@ -56,6 +56,9 @@ class AgentState(TypedDict, total=False):
     # PDF generator output.
     pdf_url: str          # public path to the generated PDF
 
+    # Research sources collected from Tavily results.
+    sources: list          # list[{"title": str, "url": str}]
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  ares:
+    build: .
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    volumes:
+      # Persist generated charts, PDFs, and session history across restarts
+      - ./static/charts:/app/static/charts
+      - ./static/reports:/app/static/reports
+      - ./ares_history.db:/app/ares_history.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

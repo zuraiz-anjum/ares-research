@@ -763,6 +763,87 @@
       box-shadow: 0 4px 16px rgba(192,57,43,0.3);
     }
     .pdf-download:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    /* ── Sources section ───────────────────────────── */
+    .sources-section {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .sources-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      color: var(--text-muted);
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      list-style: none;
+      padding: 0;
+    }
+    .sources-toggle::marker { display: none; }
+    .sources-toggle::-webkit-details-marker { display: none; }
+
+    details.sources-section[open] .sources-toggle::before { content: '▾'; }
+    details.sources-section:not([open]) .sources-toggle::before { content: '▸'; }
+    .sources-toggle::before { color: var(--accent); font-size: 12px; }
+
+    .sources-list {
+      margin: 8px 0 0 0;
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .sources-list li { color: var(--text-muted); }
+
+    .source-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 12px;
+      line-height: 1.4;
+      word-break: break-all;
+    }
+    .source-link:hover { text-decoration: underline; }
+
+    /* ── Message action buttons (copy / regenerate) ─ */
+    .msg-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .msg-group:hover .msg-actions { opacity: 1; }
+
+    .action-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-family: inherit;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.12s;
+    }
+    .action-btn:hover {
+      border-color: var(--accent);
+      color: var(--text);
+      background: var(--surface3);
+    }
+    .action-btn.copied { color: #2ea06a; border-color: #2ea06a; }
   </style>
 </head>
 <body>
@@ -807,12 +888,12 @@
           <h2>Ares</h2>
           <p>Autonomous Research &amp; Evidence System — fact-checked reports, data visualizations, and PDF exports from a single query.</p>
           <div class="chips">
-            <button class="chip" onclick="fill(this)">Pros and cons of investing in Stripe right now</button>
+            <button class="chip" onclick="fill(this)">Stripe vs Braintree vs Adyen — side by side comparison</button>
             <button class="chip" onclick="fill(this)">Write a PDF report on Anthropic's competitive position</button>
             <button class="chip" onclick="fill(this)">Bar chart: Apple $383B, Google $307B, Meta $116B revenue</button>
-            <button class="chip" onclick="fill(this)">Create a plan to learn LangGraph in 30 days</button>
-            <button class="chip" onclick="fill(this)">Write a binary search function in Python</button>
+            <button class="chip" onclick="fill(this)">Draft an email to my CTO about OpenAI's latest funding</button>
             <button class="chip" onclick="fill(this)">Debate: Is AI replacing software engineers?</button>
+            <button class="chip" onclick="fill(this)">Compare metrics for Tesla, Rivian, and Lucid Motors</button>
           </div>
         </div>
       </div>
@@ -823,7 +904,7 @@
         <input id="input" placeholder="Research a company, chart data, generate a PDF report…" autocomplete="off" />
         <button class="send-btn" id="send">Send</button>
       </div>
-      <div class="footer-hint">Try "Bar chart of OpenAI vs Anthropic vs Mistral funding" · "Generate a PDF report on Tesla" · "Debate: Python vs Go"</div>
+      <div class="footer-hint">Try "Stripe vs Braintree vs Adyen comparison" · "Draft an email about Anthropic's Series E" · "PDF report on Tesla" · Ctrl+Enter to send</div>
     </footer>
   </div>
 </div>
@@ -842,8 +923,10 @@
     research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
     pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "pdf_generator", "suggestions"],
-    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "suggestions"],
+    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "chart_writer", "suggestions"],
+    comparison:    ["clarity", "intent_router", "decomposer", "research", "comparison_matrix", "chart_writer", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
+    email:         ["clarity", "intent_router", "decomposer", "research", "email_drafter", "suggestions"],
     plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
     document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
@@ -858,10 +941,14 @@
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
     chart_writer: "Chart", pdf_generator: "PDF",
+    comparison_matrix: "Matrix", email_drafter: "Email",
   };
 
   // Streaming nodes — the ones whose LLM tokens go into the main bubble.
-  const STREAMING_NODES = new Set(["synthesis", "report_writer", "data_analyst", "code_writer", "debate_writer"]);
+  const STREAMING_NODES = new Set([
+    "synthesis", "report_writer", "data_analyst", "code_writer",
+    "debate_writer", "comparison_matrix", "email_drafter",
+  ]);
 
   let threadId = null;
   let awaitingClarification = false;
@@ -871,6 +958,7 @@
   let currentMode = "research";
   let pendingChartUrl = "";
   let pendingPdfUrl = "";
+  let pendingSources = [];
 
   // ── Session history sidebar ───────────────────────────────────────────
 
@@ -952,8 +1040,9 @@
     badge.className = `mode-badge ${badgeClass}`;
     const modeText = {
       research: "RESEARCH", report: "REPORT", data_analysis: "DATA",
-      debate: "DEBATE", plan: "PLAN", chat: "CHAT", document: "DOC",
-      code: "CODE", chart: "CHART", pdf: "PDF",
+      comparison: "COMPARE", debate: "DEBATE", plan: "PLAN",
+      chat: "CHAT", document: "DOC", code: "CODE",
+      email: "EMAIL", chart: "CHART", pdf: "PDF",
     };
     badge.textContent = modeText[mode] || mode.toUpperCase();
     pipelineEl.appendChild(badge);
@@ -1206,6 +1295,62 @@
     chatEl.scrollTop = chatEl.scrollHeight;
   }
 
+  function appendSources(group, sources) {
+    if (!sources || sources.length === 0) return;
+    const details = document.createElement("details");
+    details.className = "sources-section";
+    const summary = document.createElement("summary");
+    summary.className = "sources-toggle";
+    summary.textContent = `Sources (${sources.length})`;
+    details.appendChild(summary);
+    const ol = document.createElement("ol");
+    ol.className = "sources-list";
+    sources.forEach(s => {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = s.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.className = "source-link";
+      a.textContent = s.title || s.url;
+      li.appendChild(a);
+      ol.appendChild(li);
+    });
+    details.appendChild(ol);
+    group.appendChild(details);
+    chatEl.scrollTop = chatEl.scrollHeight;
+  }
+
+  function appendActions(group, rawText) {
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "action-btn";
+    copyBtn.title = "Copy answer";
+    copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`;
+    copyBtn.onclick = () => {
+      navigator.clipboard.writeText(rawText).then(() => {
+        copyBtn.classList.add("copied");
+        copyBtn.textContent = "✓ Copied";
+        setTimeout(() => { copyBtn.classList.remove("copied"); copyBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy`; }, 1800);
+      });
+    };
+
+    const regenBtn = document.createElement("button");
+    regenBtn.className = "action-btn";
+    regenBtn.title = "Regenerate answer";
+    regenBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Regenerate`;
+    const capturedQuery = inputEl.getAttribute("data-last-query") || "";
+    regenBtn.onclick = () => {
+      if (capturedQuery) { inputEl.value = capturedQuery; submit(); }
+    };
+
+    actions.appendChild(copyBtn);
+    actions.appendChild(regenBtn);
+    group.appendChild(actions);
+  }
+
   // ── JSON POST (used only for /resume) ────────────────────────────────
 
   async function post(url, body) {
@@ -1227,6 +1372,7 @@
 
     hideEmpty();
     addMsg(text, "user");
+    inputEl.setAttribute("data-last-query", text);
     inputEl.value = "";
     sendBtn.disabled = true;
     showTyping("Checking your question...");
@@ -1350,6 +1496,11 @@
           break;
         }
 
+        case "sources": {
+          pendingSources = data.items || [];
+          break;
+        }
+
         case "chart": {
           pendingChartUrl = data.url || "";
           if (botGroup && pendingChartUrl) {
@@ -1409,6 +1560,14 @@
             if (data.pdf_url) appendPdfDownload(group, data.pdf_url);
             if (data.suggestions?.length) appendSuggestions(group, data.suggestions);
           }
+          // Sources + actions appended last so they're always at the bottom.
+          const finalSources = pendingSources.length ? pendingSources : (data.sources || []);
+          if (finalSources.length && !(botGroup || {}).querySelector?.(".sources-section")) {
+            appendSources(targetGroup || botGroup, finalSources);
+          }
+          const finalGroup = targetGroup || botGroup;
+          if (finalGroup) appendActions(finalGroup, data.answer || rawContent);
+
           if (typeof Prism !== "undefined") Prism.highlightAllUnder(botGroup || inner);
           // Refresh history sidebar after each completed turn.
           loadHistory();
@@ -1447,6 +1606,7 @@
       pendingPlan = null;
       pendingChartUrl = "";
       pendingPdfUrl = "";
+      pendingSources = [];
       sendBtn.disabled = false;
       inputEl.focus();
     }
@@ -1472,7 +1632,12 @@
   }
 
   sendBtn.addEventListener("click", submit);
-  inputEl.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  inputEl.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) submit();
+  });
+  document.addEventListener("keydown", e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { inputEl.focus(); submit(); }
+  });
 </script>
 </body>
 </html>

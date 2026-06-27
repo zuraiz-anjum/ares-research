@@ -53,21 +53,32 @@ def research_node(state: AgentState) -> dict:
         }
 
     # Run all sub-queries in parallel — no sequential dependency between them.
-    def fetch(query: str) -> tuple[str, int]:
+    def fetch_with_sources(query: str) -> tuple[str, int, list[dict]]:
         results = tavily_search(query)
         content = f"=== Results for: {query} ===\n" + "\n\n".join(r.get("content", "") for r in results)
-        return content, len(results)
+        srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
+                for r in results if r.get("url")]
+        return content, len(results), srcs
 
     with ThreadPoolExecutor() as executor:
-        fetch_results = list(executor.map(fetch, queries))
+        fetch_results = list(executor.map(fetch_with_sources, queries))
 
     all_raw = [r[0] for r in fetch_results]
     result_counts = [r[1] for r in fetch_results]
+    all_sources: list[dict] = []
+    seen_urls: set[str] = set()
+    for _, _, srcs in fetch_results:
+        for s in srcs:
+            if s["url"] not in seen_urls:
+                all_sources.append(s)
+                seen_urls.add(s["url"])
+
     raw_research = "\n\n".join(all_raw)
     raw_research, _ = truncate_to_budget(raw_research, label="research_raw")
 
     for q, count in zip(queries, result_counts):
         logger.info(f"search query={repr(q)} results={count}")
+    logger.info(f"sources_collected count={len(all_sources)}")
 
     llm = get_llm().with_structured_output(ResearchResult)
     result: ResearchResult = llm.invoke(
@@ -89,4 +100,5 @@ def research_node(state: AgentState) -> dict:
         "findings": result.findings,
         "raw_research": raw_research,
         "confidence_score": confidence,
+        "sources": all_sources,
     }

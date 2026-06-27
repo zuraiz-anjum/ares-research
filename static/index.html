@@ -844,6 +844,251 @@
       background: var(--surface3);
     }
     .action-btn.copied { color: #2ea06a; border-color: #2ea06a; }
+
+    /* ══ Agent Workspace Panel (right side) ═══════════════════════════════ */
+    #agent-panel {
+      width: 252px;
+      flex-shrink: 0;
+      border-left: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .agent-panel-header {
+      padding: 14px 14px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .agent-panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+    }
+
+    #agent-count {
+      font-size: 10px;
+      color: var(--tag-text);
+      background: var(--tag-bg);
+      border: 1px solid var(--tag-border);
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #agent-cards {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px;
+    }
+
+    #agent-cards::-webkit-scrollbar { width: 3px; }
+    #agent-cards::-webkit-scrollbar-thumb { background: var(--border2); }
+
+    /* ── Idle state ─────────────────────────────── */
+    .ap-section-label {
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      margin: 6px 0 6px 2px;
+    }
+
+    .mode-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .mode-chip {
+      font-size: 9.5px;
+      padding: 2px 7px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      color: var(--text-dim);
+      font-weight: 500;
+      letter-spacing: 0.2px;
+    }
+
+    .idle-agent-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border-radius: 6px;
+      transition: background 0.12s;
+    }
+
+    .idle-agent-row:hover { background: var(--surface2); }
+
+    .idle-icon {
+      font-size: 14px;
+      width: 22px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .idle-name {
+      font-size: 11.5px;
+      color: var(--text-dim);
+      flex: 1;
+    }
+
+    .idle-desc {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-align: right;
+      max-width: 90px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* ── Active pipeline cards ──────────────────── */
+    .pipeline-run-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--accent);
+      margin-bottom: 10px;
+      padding: 4px 10px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(74,124,255,0.18);
+      border-radius: 6px;
+      text-align: center;
+    }
+
+    .agent-cards-list {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .agent-connector {
+      width: 1px;
+      height: 7px;
+      background: var(--border2);
+      margin: 0 0 0 20px;
+    }
+
+    .agent-card {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      transition: all 0.22s;
+    }
+
+    .agent-card.pending { opacity: 0.35; }
+
+    .agent-card.active {
+      background: rgba(74, 124, 255, 0.07);
+      border-color: rgba(74, 124, 255, 0.22);
+      opacity: 1;
+    }
+
+    .agent-card.done { opacity: 0.7; }
+
+    .agent-icon-box {
+      width: 28px;
+      height: 28px;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 7px;
+      flex-shrink: 0;
+      transition: all 0.22s;
+    }
+
+    .agent-card.active .agent-icon-box {
+      background: rgba(74, 124, 255, 0.12);
+      border-color: rgba(74, 124, 255, 0.35);
+      animation: icon-glow 1.6s ease-in-out infinite;
+    }
+
+    .agent-card.done .agent-icon-box {
+      background: rgba(46, 160, 106, 0.08);
+      border-color: rgba(46, 160, 106, 0.25);
+    }
+
+    @keyframes icon-glow {
+      0%,100% { box-shadow: 0 0 0 0 rgba(74,124,255,0); }
+      50%      { box-shadow: 0 0 10px 2px rgba(74,124,255,0.25); }
+    }
+
+    .agent-info-col {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .agent-card-name {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      transition: color 0.2s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .agent-card.active .agent-card-name { color: var(--text); }
+    .agent-card.done  .agent-card-name  { color: var(--text-dim); }
+
+    .agent-card-desc {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .agent-card.active .agent-card-desc { color: var(--text-muted); }
+
+    .agent-status-col {
+      flex-shrink: 0;
+      min-width: 32px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+
+    .spin-ring {
+      width: 13px;
+      height: 13px;
+      border: 1.5px solid rgba(74,124,255,0.25);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: ring-spin 0.75s linear infinite;
+    }
+
+    @keyframes ring-spin { to { transform: rotate(360deg); } }
+
+    .done-check { color: #2ea06a; font-size: 13px; font-weight: 700; line-height: 1; }
+
+    .agent-elapsed {
+      font-size: 9px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      font-variant-numeric: tabular-nums;
+    }
   </style>
 </head>
 <body>
@@ -907,6 +1152,14 @@
       <div class="footer-hint">Try "Stripe vs Braintree vs Adyen comparison" · "Draft an email about Anthropic's Series E" · "PDF report on Tesla" · Ctrl+Enter to send</div>
     </footer>
   </div>
+
+  <div id="agent-panel">
+    <div class="agent-panel-header">
+      <span class="agent-panel-title">Agent Workspace</span>
+      <span id="agent-count">20 agents</span>
+    </div>
+    <div id="agent-cards"></div>
+  </div>
 </div>
 
 <script>
@@ -949,6 +1202,169 @@
     "synthesis", "report_writer", "data_analyst", "code_writer",
     "debate_writer", "comparison_matrix", "email_drafter",
   ]);
+
+  // ── Agent metadata (icon + one-line description) ─────────────────────
+  const AGENT_META = {
+    clarity:           { icon: "🎯", desc: "Validates the question" },
+    intent_router:     { icon: "🗺️",  desc: "Selects pipeline mode" },
+    planner:           { icon: "📋", desc: "Creates research plan" },
+    decomposer:        { icon: "🔍", desc: "Breaks into sub-queries" },
+    research:          { icon: "🌐", desc: "Web search via Tavily" },
+    validator:         { icon: "✅", desc: "Checks research quality" },
+    doc_agent:         { icon: "📎", desc: "Fetches document" },
+    synthesis:         { icon: "✍️",  desc: "Writes the answer" },
+    fact_checker:      { icon: "🔬", desc: "Verifies key claims" },
+    critic:            { icon: "🧐", desc: "Critical peer review" },
+    report_writer:     { icon: "📝", desc: "Drafts structured report" },
+    pdf_generator:     { icon: "📄", desc: "Exports to PDF" },
+    chart_writer:      { icon: "📊", desc: "Renders chart" },
+    data_analyst:      { icon: "📈", desc: "Analyses metrics & tables" },
+    comparison_matrix: { icon: "⚖️",  desc: "Side-by-side matrix" },
+    debate_writer:     { icon: "🥊", desc: "For vs Against analysis" },
+    email_drafter:     { icon: "✉️",  desc: "Drafts professional email" },
+    code_writer:       { icon: "💻", desc: "Writes & debugs code" },
+    suggestions:       { icon: "💡", desc: "Follow-up questions" },
+  };
+
+  // ── Agent panel state ─────────────────────────────────────────────────
+  let _agentTimers = {};       // node → Date.now() when it started
+  let _activeAgentNode = null; // currently running node
+
+  function buildAgentPanel(pipeline) {
+    const container = document.getElementById("agent-cards");
+    const runLabel = document.createElement("div");
+    runLabel.className = "pipeline-run-label";
+    runLabel.id = "pipeline-run-label";
+    runLabel.textContent = "Initialising…";
+
+    const list = document.createElement("div");
+    list.className = "agent-cards-list";
+    list.id = "agent-cards-list";
+
+    pipeline.forEach((node, i) => {
+      if (i > 0) {
+        const conn = document.createElement("div");
+        conn.className = "agent-connector";
+        list.appendChild(conn);
+      }
+      const meta = AGENT_META[node] || { icon: "⚙️", desc: node };
+      const label = NODE_LABELS[node] || node;
+      const card = document.createElement("div");
+      card.className = "agent-card pending";
+      card.id = `acard-${node}`;
+      card.innerHTML = `
+        <div class="agent-icon-box">${meta.icon}</div>
+        <div class="agent-info-col">
+          <div class="agent-card-name">${label}</div>
+          <div class="agent-card-desc">${meta.desc}</div>
+        </div>
+        <div class="agent-status-col" id="astatus-${node}"></div>
+      `;
+      list.appendChild(card);
+    });
+
+    container.innerHTML = "";
+    container.appendChild(runLabel);
+    container.appendChild(list);
+  }
+
+  function _markAgentDone(node, elapsedMs) {
+    const card = document.getElementById(`acard-${node}`);
+    if (!card) return;
+    card.classList.remove("active", "pending");
+    card.classList.add("done");
+    const statusEl = document.getElementById(`astatus-${node}`);
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="done-check">✓</span>${
+        elapsedMs != null
+          ? `<span class="agent-elapsed">${(elapsedMs / 1000).toFixed(1)}s</span>`
+          : ""
+      }`;
+    }
+  }
+
+  function setAgentActive(node) {
+    // Finish the previously active card.
+    if (_activeAgentNode && _activeAgentNode !== node) {
+      const elapsed = _agentTimers[_activeAgentNode] != null
+        ? Date.now() - _agentTimers[_activeAgentNode]
+        : null;
+      _markAgentDone(_activeAgentNode, elapsed);
+    }
+
+    _activeAgentNode = node;
+    _agentTimers[node] = Date.now();
+
+    const card = document.getElementById(`acard-${node}`);
+    if (card) {
+      card.classList.remove("pending", "done");
+      card.classList.add("active");
+      card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    const statusEl = document.getElementById(`astatus-${node}`);
+    if (statusEl) {
+      statusEl.innerHTML = `<div class="spin-ring"></div>`;
+    }
+
+    // Update count badge.
+    const done = document.querySelectorAll(".agent-card.done").length;
+    const total = document.querySelectorAll(".agent-card").length;
+    const countEl = document.getElementById("agent-count");
+    if (countEl && total) countEl.textContent = `${done + 1} / ${total}`;
+  }
+
+  function resetAgentPanel() {
+    // Mark whatever is still active as done.
+    if (_activeAgentNode) {
+      const elapsed = _agentTimers[_activeAgentNode] != null
+        ? Date.now() - _agentTimers[_activeAgentNode]
+        : null;
+      _markAgentDone(_activeAgentNode, elapsed);
+    }
+    // Catch any cards still pending (skipped in short pipelines).
+    document.querySelectorAll(".agent-card.pending").forEach(c => {
+      c.classList.remove("pending");
+      c.classList.add("done");
+    });
+    _activeAgentNode = null;
+    _agentTimers = {};
+
+    // Update badge to "done".
+    const countEl = document.getElementById("agent-count");
+    if (countEl) countEl.textContent = "done ✓";
+    const runLabel = document.getElementById("pipeline-run-label");
+    if (runLabel) runLabel.textContent = "Pipeline complete";
+
+    // Return to idle view after a short pause.
+    setTimeout(showIdlePanel, 3500);
+  }
+
+  function showIdlePanel() {
+    const container = document.getElementById("agent-cards");
+    const countEl = document.getElementById("agent-count");
+    if (countEl) countEl.textContent = "20 agents";
+
+    const modeList = [
+      "Research","Compare","Report","PDF","Data",
+      "Debate","Email","Plan","Code","Chart","Chat","Document",
+    ];
+    const agentRows = Object.entries(AGENT_META).map(([node, meta]) =>
+      `<div class="idle-agent-row">
+        <span class="idle-icon">${meta.icon}</span>
+        <span class="idle-name">${NODE_LABELS[node] || node}</span>
+        <span class="idle-desc">${meta.desc}</span>
+      </div>`
+    ).join("");
+
+    container.innerHTML = `
+      <div class="ap-section-label">12 Pipeline Modes</div>
+      <div class="mode-chips">
+        ${modeList.map(m => `<span class="mode-chip">${m}</span>`).join("")}
+      </div>
+      <div class="ap-section-label" style="margin-top:4px;">All Agents</div>
+      ${agentRows}
+    `;
+  }
 
   let threadId = null;
   let awaitingClarification = false;
@@ -1022,9 +1438,14 @@
     currentMode = "research";
     pipelineEl.innerHTML = _buildPipelineHtml(activePipeline, new Set());
     pipelineEl.classList.add("visible");
-    // Mark clarity as active immediately.
     const clarityEl = pipelineEl.querySelector('[data-node="clarity"]');
     if (clarityEl) clarityEl.classList.add("active");
+    // Build the initial 2-card panel so something appears immediately.
+    _agentTimers = {};
+    _activeAgentNode = null;
+    buildAgentPanel(["clarity", "intent_router"]);
+    const countEl = document.getElementById("agent-count");
+    if (countEl) countEl.textContent = "starting…";
   }
 
   function setMode(mode) {
@@ -1044,8 +1465,20 @@
       chat: "CHAT", document: "DOC", code: "CODE",
       email: "EMAIL", chart: "CHART", pdf: "PDF",
     };
-    badge.textContent = modeText[mode] || mode.toUpperCase();
+    const modeLabel = modeText[mode] || mode.toUpperCase();
+    badge.textContent = modeLabel;
     pipelineEl.appendChild(badge);
+
+    // Rebuild the agent panel with the full pipeline; pre-mark the two
+    // already-completed routing agents as done.
+    buildAgentPanel(config);
+    _markAgentDone("clarity", null);
+    _markAgentDone("intent_router", null);
+    _activeAgentNode = null;
+    const runLabel = document.getElementById("pipeline-run-label");
+    if (runLabel) runLabel.textContent = `${modeLabel} Pipeline`;
+    const countEl = document.getElementById("agent-count");
+    if (countEl) countEl.textContent = `2 / ${config.length}`;
   }
 
   function advancePipelineToNode(node) {
@@ -1069,6 +1502,7 @@
       pipelineEl.classList.remove("visible");
       pipelineEl.innerHTML = "";
     }, 1400);
+    resetAgentPanel();
   }
 
   // ── Typing indicator ─────────────────────────────────────────────────
@@ -1411,6 +1845,7 @@
 
         case "node_start": {
           advancePipelineToNode(data.node);
+          setAgentActive(data.node);
           const labels = {
             clarity:       "Checking your question...",
             intent_router: "Routing to the right pipeline...",
@@ -1630,6 +2065,9 @@
       if (data.critique) appendCritique(group, data.critique);
     }
   }
+
+  // Populate the idle panel on first load.
+  showIdlePanel();
 
   sendBtn.addEventListener("click", submit);
   inputEl.addEventListener("keydown", e => {

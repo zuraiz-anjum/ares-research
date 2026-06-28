@@ -23,6 +23,7 @@ suggestions is the universal terminal node across all pipelines.
 """
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.chart_writer import chart_writer_node
@@ -129,7 +130,7 @@ _RESEARCH_PIPELINE_TARGETS = {
 }
 
 
-def build_graph():
+def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder = StateGraph(AgentState)
 
     builder.add_node("clarity",           clarity_node)
@@ -202,10 +203,7 @@ def build_graph():
     builder.add_edge("code_writer",       "suggestions")
     builder.add_edge("suggestions",       END)
 
-    # MemorySaver supports all async methods (ainvoke, astream_events, aget_state).
-    # For production persistence swap this for AsyncPostgresSaver or AsyncSqliteSaver
-    # initialised in a FastAPI lifespan context manager.
-    return builder.compile(checkpointer=MemorySaver())
+    return builder.compile(checkpointer=checkpointer or MemorySaver())
 
 
 # Compiled once at import time and reused across requests.

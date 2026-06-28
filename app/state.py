@@ -63,6 +63,9 @@ class AgentState(TypedDict, total=False):
     # Research sources collected from Tavily results.
     sources: list          # list[{"title": str, "url": str}]
 
+    # RAG: ID of the document uploaded by the user for this session.
+    doc_id: str            # hex UUID returned by POST /upload
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

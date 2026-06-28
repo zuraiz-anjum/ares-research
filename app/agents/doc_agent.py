@@ -1,10 +1,12 @@
 """Document Agent.
 
-Detects a URL in the user's message, fetches the page, strips HTML to plain
-text, and loads the result as research findings so the Synthesis agent can
-answer questions about the document.
+Two modes:
+  1. RAG mode  — state["doc_id"] is set: retrieve relevant chunks from the
+                 ChromaDB vector store and return them as findings.
+  2. URL mode  — no doc_id: detect a URL in the user's message, fetch the
+                 page, strip HTML, and return the text as findings.
 
-Uses only stdlib (urllib + html.parser) — no extra dependencies.
+The Synthesis agent then turns the findings into a natural-language answer.
 """
 
 import logging
@@ -66,6 +68,27 @@ def doc_agent_node(state: AgentState) -> dict:
             "findings": "Mock document: The article discusses AI research trends in 2025, focusing on multi-agent systems and real-time streaming pipelines.",
             "raw_research": "Mock raw document content.",
             "confidence_score": 8,
+        }
+
+    # ── RAG path: answer from an uploaded document ─────────────────────────
+    doc_id = state.get("doc_id", "")
+    if doc_id:
+        from app.rag.store import search
+        question = state.get("original_query", "") or message
+        chunks = search(doc_id, question, k=6)
+        if chunks:
+            context = "\n\n---\n\n".join(chunks)
+            logger.info(f"rag_retrieved doc_id={doc_id} chunks={len(chunks)}")
+            return {
+                "findings": f"Relevant excerpts from the uploaded document:\n\n{context}",
+                "raw_research": context,
+                "confidence_score": 8,
+            }
+        logger.warning(f"rag_no_results doc_id={doc_id}")
+        return {
+            "findings": "No relevant content was found in the uploaded document for your question. Try rephrasing.",
+            "raw_research": "",
+            "confidence_score": 2,
         }
 
     urls = _URL_RE.findall(message)

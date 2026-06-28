@@ -5,6 +5,7 @@ into a professionally styled PDF using ReportLab. The file is saved to
 static/reports/ and a download URL is stored in state.
 """
 
+import html as _html
 import logging
 import os
 import re
@@ -69,8 +70,30 @@ def _build_styles():
     }
 
 
+def _sanitize_unicode(text: str) -> str:
+    """Replace Unicode chars Helvetica cannot render (would show as ■)."""
+    return (
+        text
+        .replace('‑', '-')    # non-breaking hyphen
+        .replace('‒', '-')    # figure dash
+        .replace('–', '-')    # en dash
+        .replace('—', '--')   # em dash
+        .replace('―', '--')   # horizontal bar
+        .replace('­', '')     # soft hyphen
+        .replace(' ', ' ')    # non-breaking space
+        .replace('‘', "'")    # left single quotation mark
+        .replace('’', "'")    # right single quotation mark
+        .replace('“', '"')    # left double quotation mark
+        .replace('”', '"')    # right double quotation mark
+        .replace('…', '...')  # horizontal ellipsis
+        .replace('•', '-')    # bullet (handled by _md_to_flowables but just in case)
+        .replace('■', '-')    # black square (the tofu glyph itself)
+    )
+
+
 def _inline_md(text: str) -> str:
     """Convert **bold** and _italic_ to ReportLab XML tags."""
+    text = _sanitize_unicode(text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"\*(.+?)\*",     r"<i>\1</i>", text)
     text = re.sub(r"_(.+?)_",       r"<i>\1</i>", text)
@@ -81,14 +104,72 @@ def _inline_md(text: str) -> str:
 
 
 def _md_to_flowables(text: str, styles: dict) -> list:
-    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import (
+        HRFlowable, Paragraph, Spacer, Table, TableStyle,
+    )
+
+    C = colors.HexColor
+    _th = ParagraphStyle("th", parent=styles["body"],
+                         fontName="Helvetica-Bold", fontSize=9,
+                         textColor=colors.white)
+    _td = ParagraphStyle("td", parent=styles["body"], fontSize=9)
 
     flowables = []
-    for raw in text.split("\n"):
-        line = raw.rstrip()
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        i += 1
 
         if not line:
             flowables.append(Spacer(1, 5))
+            continue
+
+        # ── Markdown pipe table ────────────────────────────────────────────
+        if line.startswith("|"):
+            table_lines = [line]
+            while i < len(lines) and lines[i].rstrip().startswith("|"):
+                table_lines.append(lines[i].rstrip())
+                i += 1
+            rows = []
+            for tl in table_lines:
+                cells = [c.strip() for c in tl.strip("|").split("|")]
+                non_empty = [c for c in cells if c]
+                # Skip GFM separator rows (|---|:---:|---:|)
+                if non_empty and all(re.match(r"^:?-+:?$", c) for c in non_empty):
+                    continue
+                rows.append(cells)
+            if rows:
+                col_count = max(len(r) for r in rows)
+                col_w = (16 * cm) / col_count
+                data = []
+                for r_idx, row in enumerate(rows):
+                    sty = _th if r_idx == 0 else _td
+                    cells_p = [Paragraph(_inline_md(c), sty) for c in row]
+                    while len(cells_p) < col_count:
+                        cells_p.append(Paragraph("", _td))
+                    data.append(cells_p)
+                t = Table(data, colWidths=[col_w] * col_count, repeatRows=1)
+                t.setStyle(TableStyle([
+                    ("BACKGROUND",    (0, 0), (-1, 0),  C("#1a1a2e")),
+                    ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
+                    ("FONTNAME",      (0, 0), (-1, 0),  "Helvetica-Bold"),
+                    ("FONTSIZE",      (0, 0), (-1, -1), 9),
+                    ("ROWBACKGROUNDS",(0, 1), (-1, -1),
+                     [C("#f5f5f5"), colors.white]),
+                    ("GRID",          (0, 0), (-1, -1), 0.4, C("#cccccc")),
+                    ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                    ("LEFTPADDING",   (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING",  (0, 0), (-1, -1), 6),
+                ]))
+                flowables.append(Spacer(1, 8))
+                flowables.append(t)
+                flowables.append(Spacer(1, 8))
             continue
 
         if line.startswith("### "):
@@ -106,12 +187,9 @@ def _md_to_flowables(text: str, styles: dict) -> list:
                 Paragraph(f"{num}. {_inline_md(rest)}", styles["bullet"])
             )
         elif re.match(r"^-{3,}$|^\*{3,}$", line):
-            from reportlab.platypus import HRFlowable
-            from reportlab.lib import colors
             flowables.append(
                 HRFlowable(width="100%", thickness=0.5,
-                           color=colors.HexColor("#cccccc"),
-                           spaceBefore=6, spaceAfter=6)
+                           color=C("#cccccc"), spaceBefore=6, spaceAfter=6)
             )
         else:
             flowables.append(Paragraph(_inline_md(line), styles["body"]))
@@ -159,7 +237,11 @@ def pdf_generator_node(state: AgentState) -> dict:
                            styles["cover_tag"]))
     story.append(Spacer(1, 10))
 
-    title_text = (query[:90] + "…") if len(query) > 90 else query
+    if len(query) > 120:
+        truncated = query[:120].rsplit(" ", 1)[0]
+        title_text = truncated + "…"
+    else:
+        title_text = query
     story.append(Paragraph(title_text, styles["cover_title"]))
 
     ts = datetime.utcnow().strftime("%B %d, %Y")
@@ -224,6 +306,26 @@ def pdf_generator_node(state: AgentState) -> dict:
                                 color=C("#cccccc"), spaceBefore=8, spaceAfter=10))
         story.append(Paragraph("Critical Review", styles["h2"]))
         story.extend(_md_to_flowables(critique, styles))
+
+    # ── Sources & References ────────────────────────────────────────────────────
+    sources = state.get("sources") or []
+    if sources:
+        story.append(Spacer(1, 16))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                color=C("#cccccc"), spaceBefore=8, spaceAfter=10))
+        story.append(Paragraph("Sources &amp; References", styles["h2"]))
+        for idx, src in enumerate(sources, 1):
+            title = _sanitize_unicode(src.get("title") or "Untitled")
+            url   = src.get("url", "")
+            title_esc = _html.escape(title)
+            if url:
+                url_esc = _html.escape(url, quote=True)
+                entry = (f'{idx}.  <link href="{url_esc}" color="#4C72B0">'
+                         f'<u>{title_esc}</u></link>')
+            else:
+                entry = f"{idx}.  {title_esc}"
+            story.append(Paragraph(entry, styles["body"]))
+        story.append(Spacer(1, 8))
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     story.append(Spacer(1, 30))

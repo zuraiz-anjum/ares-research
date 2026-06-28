@@ -41,7 +41,12 @@ What should the reader watch out for? Counterpoints, data limitations, open ques
 Rules:
 - Be specific — cite figures, names, and dates when available.
 - Avoid generic phrases like "it is important to note" or "in conclusion".
-- If multiple entities were researched, give each its own sub-section under Key Findings."""
+- If multiple entities were researched, give each its own sub-section under Key Findings.
+- Output ONLY the five sections above. Do NOT add appendices, chart code, mermaid diagrams,
+  LaTeX, PDF assembly instructions, or any meta-content about how to generate charts or
+  export the document. Charts and PDFs are handled automatically by separate pipeline agents.
+- Use plain ASCII hyphens (-) for compound words and dashes. Do not use Unicode dashes,
+  non-breaking hyphens, or special typographic characters."""
 
 
 async def report_writer_node(state: AgentState) -> dict:

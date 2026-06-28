@@ -175,6 +175,10 @@ class RouteResult(BaseModel):
 
 
 def intent_router_node(state: AgentState) -> dict:
+    # If the user uploaded a document for this session, always use the document pipeline.
+    if state.get("doc_id"):
+        return {"mode": "document"}
+
     question = state.get("original_query", "")
 
     if settings.mock_mode:

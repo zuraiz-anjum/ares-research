@@ -570,6 +570,36 @@
 
     input::placeholder { color: var(--text-muted); }
 
+    .attach-btn {
+      padding: 11px 13px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .attach-btn:hover { background: var(--surface3, #2a2a3a); color: var(--accent); }
+    .attach-btn.has-doc { color: var(--accent); border-color: var(--accent); }
+
+    .doc-badge {
+      max-width: 720px; margin: 6px auto 0;
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 12px; color: var(--accent);
+    }
+    .doc-badge span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .doc-badge button {
+      background: none; border: none; color: var(--text-muted);
+      cursor: pointer; font-size: 15px; padding: 0 2px; line-height: 1;
+    }
+    .doc-badge button:hover { color: var(--text); }
+
     .send-btn {
       padding: 11px 20px;
       background: linear-gradient(135deg, #4a7cff, #6a5cff);
@@ -1146,8 +1176,14 @@
 
     <footer>
       <div class="input-row">
+        <button class="attach-btn" id="attach-btn" title="Upload document (PDF, DOCX, TXT)">&#128206;</button>
+        <input type="file" id="file-input" accept=".pdf,.txt,.md,.docx" style="display:none" />
         <input id="input" placeholder="Research a company, chart data, generate a PDF report…" autocomplete="off" />
         <button class="send-btn" id="send">Send</button>
+      </div>
+      <div id="doc-badge" style="display:none" class="doc-badge">
+        <span id="doc-badge-name"></span>
+        <button id="doc-badge-remove" title="Remove document">&times;</button>
       </div>
       <div class="footer-hint">Try "Stripe vs Braintree vs Adyen comparison" · "Draft an email about Anthropic's Series E" · "PDF report on Tesla" · Ctrl+Enter to send</div>
     </footer>
@@ -1371,6 +1407,56 @@
   let typingEl = null;
   let activeEs = null;
   let activePipeline = ["clarity", "intent_router"]; // updated on mode event
+
+  // ── RAG document state ─────────────────────────────────────────────────
+  let activeDocId = null;
+  let activeDocName = null;
+
+  const attachBtn   = document.getElementById("attach-btn");
+  const fileInput   = document.getElementById("file-input");
+  const docBadge    = document.getElementById("doc-badge");
+  const docBadgeName = document.getElementById("doc-badge-name");
+  const docBadgeRemove = document.getElementById("doc-badge-remove");
+
+  attachBtn.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    fileInput.value = "";
+
+    attachBtn.disabled = true;
+    attachBtn.textContent = "⏳";
+
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/upload", { method: "POST", body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+        alert(err.detail || "Upload failed");
+        return;
+      }
+      const data = await res.json();
+      activeDocId   = data.doc_id;
+      activeDocName = data.filename;
+      docBadgeName.textContent = `📎 ${data.filename}  (${data.chunks} chunks)`;
+      docBadge.style.display = "flex";
+      attachBtn.classList.add("has-doc");
+    } catch (e) {
+      alert("Upload error: " + e.message);
+    } finally {
+      attachBtn.disabled = false;
+      attachBtn.textContent = "📎";
+    }
+  });
+
+  docBadgeRemove.addEventListener("click", () => {
+    activeDocId   = null;
+    activeDocName = null;
+    docBadge.style.display = "none";
+    attachBtn.classList.remove("has-doc");
+  });
   let currentMode = "research";
   let pendingChartUrl = "";
   let pendingPdfUrl = "";
@@ -1833,6 +1919,9 @@
 
     const params = new URLSearchParams({ message: text });
     if (threadId) params.set("thread_id", threadId);
+    // Always send doc_id — empty string explicitly clears it from LangGraph state
+    // so removing the badge stops RAG mode on the same thread.
+    params.set("doc_id", activeDocId || "");
 
     const es = new EventSource(`/chat/stream?${params}`);
     activeEs = es;

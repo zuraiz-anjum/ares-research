@@ -10,6 +10,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from collections import deque
@@ -17,12 +18,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import aiosqlite
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
+from pathlib import Path
 from pydantic import BaseModel
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -30,8 +32,11 @@ from slowapi.util import get_remote_address
 
 from langgraph.errors import GraphInterrupt
 
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
 from app.config import settings, validate_settings
-from app.graph import graph
+import app.graph as _graph_mod
+from app.graph import build_graph
 
 logging.basicConfig(
     level=logging.INFO,
@@ -97,15 +102,27 @@ async def _save_session(session: dict) -> None:
         await db.commit()
 
 
+CHECKPOINT_DB = "ares_checkpoints.db"
+
+
+UPLOADS_DIR = "uploads"
+_ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     import os
     os.makedirs("static/charts", exist_ok=True)
     os.makedirs("static/reports", exist_ok=True)
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
     await _init_db()
     validate_settings()
     logger.info("startup validation passed")
-    yield
+    async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
+        _graph_mod.graph = build_graph(checkpointer)
+        logger.info(f"checkpoint_db={CHECKPOINT_DB} persistent=true")
+        yield
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -129,6 +146,7 @@ def health() -> dict:
 class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
+    doc_id: str | None = None     # set when the user has uploaded a document
 
 
 class ResumeRequest(BaseModel):
@@ -156,7 +174,7 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         if err:
             return err
     try:
-        result = await graph.ainvoke(inputs, config)
+        result = await _graph_mod.graph.ainvoke(inputs, config)
     except GraphInterrupt as exc:
         question = "Could you clarify your request?"
         if exc.args:
@@ -191,11 +209,46 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
     }
 
 
+@app.post("/upload")
+@limiter.limit("10/minute")
+async def upload_document(request: Request, file: UploadFile = File(...)) -> dict:
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported type '{ext}'. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}")
+    contents = await file.read()
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File too large (max 10 MB)")
+
+    doc_id = uuid.uuid4().hex
+    save_path = os.path.join(UPLOADS_DIR, f"{doc_id}{ext}")
+    with open(save_path, "wb") as fh:
+        fh.write(contents)
+
+    try:
+        from app.rag.loader import load_and_chunk
+        from app.rag.store import add_document
+        chunks = load_and_chunk(save_path, file.filename)
+        n = add_document(doc_id, chunks, file.filename)
+        logger.info(f"rag_upload doc_id={doc_id} filename={file.filename!r} chunks={n}")
+    except Exception:
+        logger.exception(f"rag_upload_failed doc_id={doc_id}")
+        raise HTTPException(500, "Failed to process document. Check the file is not encrypted or empty.")
+
+    return {"doc_id": doc_id, "filename": file.filename, "chunks": n}
+
+
 @app.post("/chat")
 @limiter.limit("20/minute")
 async def chat(request: Request, req: ChatRequest) -> dict:
     thread_id = req.thread_id or str(uuid.uuid4())
-    inputs = {"messages": [HumanMessage(content=req.message)], "attempts": 0}
+    inputs: dict = {
+        "messages": [HumanMessage(content=req.message)],
+        "attempts": 0,
+        # Always write doc_id so an explicit "" overwrites the checkpoint value,
+        # clearing RAG mode when the user removes the document badge.
+        "doc_id": req.doc_id or "",
+        "original_query": req.message,
+    }
     return await _run_async(inputs, thread_id)
 
 
@@ -229,6 +282,7 @@ async def chat_stream(
     request: Request,
     message: str,
     thread_id: str | None = None,
+    doc_id: str | None = None,
 ) -> StreamingResponse:
     _thread_id = thread_id or str(uuid.uuid4())
 
@@ -253,7 +307,12 @@ async def chat_stream(
             yield sse({"type": "complete", "answer": mock, "thread_id": _thread_id, "sub_queries": [message]})
             return
 
-        inputs = {"messages": [HumanMessage(content=message)], "attempts": 0}
+        inputs: dict = {
+            "messages": [HumanMessage(content=message)],
+            "attempts": 0,
+            "doc_id": doc_id or "",
+            "original_query": message,
+        }
         config = {"configurable": {"thread_id": _thread_id}}
 
         full_answer = ""
@@ -270,7 +329,7 @@ async def chat_stream(
         t_start = time.monotonic()
 
         try:
-            async for event in graph.astream_events(inputs, config, version="v2"):
+            async for event in _graph_mod.graph.astream_events(inputs, config, version="v2"):
                 kind = event["event"]
                 name = event.get("name", "")
                 meta = event.get("metadata", {})
@@ -333,7 +392,7 @@ async def chat_stream(
 
         # Check for a pending interrupt (clarification request).
         try:
-            snapshot = await graph.aget_state(config)
+            snapshot = await _graph_mod.graph.aget_state(config)
             pending = [ipt for task in snapshot.tasks for ipt in (task.interrupts or [])]
             if pending:
                 question = pending[0].value.get("question", "Could you clarify your request?")

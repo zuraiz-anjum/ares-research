@@ -794,6 +794,83 @@
     }
     .pdf-download:hover { opacity: 0.9; transform: translateY(-1px); }
 
+    /* ── Confidence badge ──────────────────────────── */
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin-left: 6px;
+    }
+    .confidence-badge.high   { background: rgba(46,160,106,0.12); border: 1px solid rgba(46,160,106,0.3); color: #2ea06a; }
+    .confidence-badge.medium { background: rgba(201,184,106,0.12); border: 1px solid rgba(201,184,106,0.3); color: #c9b86a; }
+    .confidence-badge.low    { background: rgba(201,112,112,0.12); border: 1px solid rgba(201,112,112,0.3); color: #c97070; }
+
+    /* ── Mic button ─────────────────────────────────── */
+    .mic-btn {
+      padding: 11px 13px;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border: 1px solid var(--border2);
+      border-radius: 10px;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      flex-shrink: 0;
+    }
+    .mic-btn:hover { background: var(--surface3); color: var(--accent); }
+    .mic-btn.recording { color: #c97070; border-color: #c97070; animation: mic-pulse 1s infinite; }
+    @keyframes mic-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(201,112,112,0); }
+      50%      { box-shadow: 0 0 0 4px rgba(201,112,112,0.25); }
+    }
+
+    /* ── Export / share action buttons ─────────────── */
+    .export-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .export-btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 13px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: 7px;
+      font-size: 11.5px;
+      font-family: inherit;
+      color: var(--text-muted);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.12s;
+    }
+    .export-btn:hover { border-color: var(--accent); color: var(--text); background: var(--surface3); }
+    .export-btn.copied { color: #2ea06a; border-color: #2ea06a; }
+
+    /* ── Sidebar footer ─────────────────────────────── */
+    .sidebar-footer {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .sidebar-footer a { color: var(--accent); text-decoration: none; }
+    .sidebar-footer a:hover { text-decoration: underline; }
+
+    /* ── Inline citation superscripts ─────────────── */
+    a.cite-sup {
+      font-size: 10px;
+      font-weight: 600;
+      vertical-align: super;
+      line-height: 0;
+      color: var(--accent);
+      text-decoration: none;
+      padding: 0 1px;
+      border-bottom: 1px dotted var(--accent);
+    }
+    a.cite-sup:hover { color: var(--accent2); border-color: var(--accent2); }
+
     /* ── Sources section ───────────────────────────── */
     .sources-section {
       margin-top: 12px;
@@ -986,6 +1063,44 @@
       text-overflow: ellipsis;
     }
 
+    /* ── Pipeline diagram (idle) ────────────────── */
+    .pipeline-diagram {
+      margin: 8px 0 14px;
+    }
+
+    .pd-flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 3px;
+      row-gap: 4px;
+    }
+
+    .pd-node {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 3px 7px;
+      border-radius: 5px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      color: var(--text-dim);
+      white-space: nowrap;
+      letter-spacing: 0.2px;
+    }
+
+    .pd-node.active {
+      background: var(--accent-glow);
+      border-color: rgba(74,124,255,0.4);
+      color: var(--accent);
+    }
+
+    .pd-arrow {
+      font-size: 9px;
+      color: var(--text-muted);
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
     /* ── Active pipeline cards ──────────────────── */
     .pipeline-run-label {
       font-size: 10px;
@@ -1146,13 +1261,40 @@
   <div id="telemetry-badge" class="telemetry-badge" style="display:none"></div>
 </header>
 
+<!-- ── Auth modal ─────────────────────────────────────────────────────── -->
+<div id="auth-modal" style="display:none;position:fixed;inset:0;z-index:9999;
+  background:rgba(8,9,11,0.92);display:none;align-items:center;justify-content:center;">
+  <div style="background:#0e1015;border:1px solid #1c2030;border-radius:12px;
+    padding:36px 40px;width:340px;text-align:center;">
+    <div style="font-size:28px;margin-bottom:8px;">⚡</div>
+    <div style="font-size:18px;font-weight:600;color:#dde1ea;margin-bottom:4px;">Ares</div>
+    <div style="font-size:12px;color:#858fa5;margin-bottom:24px;">Enter your access password</div>
+    <input id="auth-input" type="password" placeholder="Password"
+      style="width:100%;padding:10px 14px;background:#13161d;border:1px solid #1c2030;
+      border-radius:8px;color:#dde1ea;font-size:14px;outline:none;margin-bottom:12px;"
+      onkeydown="if(event.key==='Enter')doLogin()" />
+    <button onclick="doLogin()"
+      style="width:100%;padding:10px;background:#4a7cff;color:#fff;border:none;
+      border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+      Sign In
+    </button>
+    <div id="auth-error" style="color:#c97070;font-size:12px;margin-top:10px;display:none;">
+      Incorrect password. Try again.
+    </div>
+  </div>
+</div>
+
 <div id="app-body">
   <div id="sidebar">
     <div class="sidebar-header">
       <span class="sidebar-title">History</span>
-      <button class="sidebar-refresh" onclick="loadHistory()" title="Refresh">↻</button>
+      <div style="display:flex;gap:4px;margin-left:auto">
+        <button class="sidebar-refresh" onclick="newChat()" title="New chat" style="font-size:13px">✦</button>
+        <button class="sidebar-refresh" onclick="loadHistory()" title="Refresh">↻</button>
+      </div>
     </div>
     <div id="history-list"><div class="sidebar-empty">No sessions yet</div></div>
+    <div class="sidebar-footer"><a href="/dashboard" target="_blank">Analytics Dashboard</a></div>
   </div>
 
   <div id="main-area">
@@ -1176,8 +1318,9 @@
 
     <footer>
       <div class="input-row">
-        <button class="attach-btn" id="attach-btn" title="Upload document (PDF, DOCX, TXT)">&#128206;</button>
-        <input type="file" id="file-input" accept=".pdf,.txt,.md,.docx" style="display:none" />
+        <button class="attach-btn" id="attach-btn" title="Upload document or image">&#128206;</button>
+        <input type="file" id="file-input" accept=".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.webp,.gif" style="display:none" />
+        <button class="mic-btn" id="mic-btn" title="Voice input (hold to record)">&#127908;</button>
         <input id="input" placeholder="Research a company, chart data, generate a PDF report…" autocomplete="off" />
         <button class="send-btn" id="send">Send</button>
       </div>
@@ -1195,6 +1338,10 @@
       <span id="agent-count">20 agents</span>
     </div>
     <div id="agent-cards"></div>
+    <div id="pipeline-diagram-wrap" style="display:none;border-top:1px solid var(--border);padding:10px 10px 8px;flex-shrink:0;">
+      <div class="ap-section-label" id="pipeline-diagram-label">Selected Pipeline</div>
+      <div class="pipeline-diagram"><div class="pd-flow" id="pipeline-diagram-flow"></div></div>
+    </div>
   </div>
 </div>
 
@@ -1402,6 +1549,39 @@
     `;
   }
 
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  const authModal = document.getElementById("auth-modal");
+
+  async function checkAuth() {
+    const res = await fetch("/auth/status").catch(() => null);
+    if (!res) return;
+    const data = await res.json();
+    if (data.required && !data.authenticated) {
+      authModal.style.display = "flex";
+      setTimeout(() => document.getElementById("auth-input")?.focus(), 50);
+    }
+  }
+
+  async function doLogin() {
+    const pw = document.getElementById("auth-input").value;
+    const errEl = document.getElementById("auth-error");
+    errEl.style.display = "none";
+    const res = await fetch("/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({password: pw}),
+    });
+    if (res.ok) {
+      authModal.style.display = "none";
+    } else {
+      errEl.style.display = "block";
+      document.getElementById("auth-input").value = "";
+      document.getElementById("auth-input").focus();
+    }
+  }
+
+  checkAuth();
+
   let threadId = null;
   let awaitingClarification = false;
   let typingEl = null;
@@ -1409,14 +1589,23 @@
   let activePipeline = ["clarity", "intent_router"]; // updated on mode event
 
   // ── RAG document state ─────────────────────────────────────────────────
-  let activeDocId = null;
-  let activeDocName = null;
+  // Multi-file support: activeDocIds is a list; threadDocId is comma-joined for the API.
+  let activeDocIds  = [];    // doc_ids from current uploads (shown in badge)
+  let activeDocNames = [];
+  let threadDocId   = null;  // committed to current thread silently (comma-joined)
+  // Legacy single-doc alias (used by older code paths)
+  Object.defineProperty(window, "activeDocId", {
+    get() { return activeDocIds[0] || null; },
+    set(v) { if (v) { activeDocIds = [v]; } else { activeDocIds = []; } },
+  });
 
   const attachBtn   = document.getElementById("attach-btn");
   const fileInput   = document.getElementById("file-input");
   const docBadge    = document.getElementById("doc-badge");
   const docBadgeName = document.getElementById("doc-badge-name");
   const docBadgeRemove = document.getElementById("doc-badge-remove");
+
+  const IMAGE_TYPES = new Set(["image/png","image/jpeg","image/gif","image/webp"]);
 
   attachBtn.addEventListener("click", () => fileInput.click());
 
@@ -1431,16 +1620,20 @@
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const res = await fetch("/upload", { method: "POST", body: fd });
+      const endpoint = IMAGE_TYPES.has(file.type) ? "/upload/image" : "/upload";
+      const res = await fetch(endpoint, { method: "POST", body: fd });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: "Upload failed" }));
         alert(err.detail || "Upload failed");
         return;
       }
       const data = await res.json();
-      activeDocId   = data.doc_id;
-      activeDocName = data.filename;
-      docBadgeName.textContent = `📎 ${data.filename}  (${data.chunks} chunks)`;
+      activeDocIds.push(data.doc_id);
+      activeDocNames.push(data.filename);
+      const totalChunks = activeDocNames.length > 1
+        ? `${activeDocNames.length} files`
+        : `${data.chunks} chunks`;
+      docBadgeName.textContent = `📎 ${activeDocNames.join(", ")}  (${totalChunks})`;
       docBadge.style.display = "flex";
       attachBtn.classList.add("has-doc");
     } catch (e) {
@@ -1452,8 +1645,9 @@
   });
 
   docBadgeRemove.addEventListener("click", () => {
-    activeDocId   = null;
-    activeDocName = null;
+    activeDocIds  = [];
+    activeDocNames = [];
+    threadDocId  = null;
     docBadge.style.display = "none";
     attachBtn.classList.remove("has-doc");
   });
@@ -1491,6 +1685,42 @@
   function fillFromHistory(query) {
     inputEl.value = query;
     inputEl.focus();
+  }
+
+  function newChat() {
+    // Close any active stream
+    if (activeEs) { activeEs.close(); activeEs = null; }
+    // Reset conversation state
+    threadId = null;
+    threadDocId = null;
+    activeDocIds = [];
+    activeDocNames = [];
+    awaitingClarification = false;
+    // Reset doc badge
+    docBadge.style.display = "none";
+    attachBtn.classList.remove("has-doc");
+    // Clear chat and show empty state
+    const chat = document.getElementById("chat");
+    chat.innerHTML = `<div id="empty-state" class="empty-state">
+      <div class="empty-icon">⚡</div>
+      <div class="empty-title">Ares</div>
+      <div class="empty-sub">Autonomous Research &amp; Evidence System — fact-checked reports, data visualizations, and PDF exports from a single query.</div>
+      <div class="empty-chips">
+        <button class="chip" onclick="fill(this)">Stripe vs Braintree vs Adyen — side by side comparison</button>
+        <button class="chip" onclick="fill(this)">Write a PDF report on Anthropic's competitive position</button>
+        <button class="chip" onclick="fill(this)">Bar chart: Apple $383B, Google $307B, Meta $116B revenue</button>
+        <button class="chip" onclick="fill(this)">Draft an email to my CTO about OpenAI's latest funding</button>
+        <button class="chip" onclick="fill(this)">Debate: Is AI replacing software engineers?</button>
+        <button class="chip" onclick="fill(this)">Compare metrics for Tesla, Rivian, and Lucid Motors</button>
+      </div>
+    </div>`;
+    inputEl.value = "";
+    inputEl.focus();
+    // Hide pipeline and diagram
+    pipelineEl.classList.remove("visible");
+    pipelineEl.innerHTML = "";
+    const pdWrap = document.getElementById("pipeline-diagram-wrap");
+    if (pdWrap) pdWrap.style.display = "none";
   }
 
   loadHistory();
@@ -1534,6 +1764,42 @@
     if (countEl) countEl.textContent = "starting…";
   }
 
+  // ── Pipeline diagram (mini flowchart in agent panel) ──────────────────────
+  const NODE_SHORT = {
+    clarity: "Clarity", intent_router: "Router", decomposer: "Decomposer",
+    research: "Research", validator: "Validator", synthesis: "Synthesis",
+    fact_checker: "Fact-check", critic: "Critic", suggestions: "Suggestions",
+    doc_agent: "DocAgent", report_writer: "Report", pdf_generator: "PDF",
+    chart_writer: "Chart", data_analyst: "Data", comparison_matrix: "Compare",
+    debate_writer: "Debate", email_drafter: "Email", code_writer: "Code",
+    planner: "Planner",
+  };
+
+  function buildPipelineDiagram(pipeline, activeNode) {
+    const wrap = document.getElementById("pipeline-diagram-wrap");
+    const flowEl = document.getElementById("pipeline-diagram-flow");
+    const labelEl = document.getElementById("pipeline-diagram-label");
+    if (!wrap || !flowEl) return;
+    wrap.style.display = "";
+    labelEl.textContent = "Selected Pipeline";
+    const parts = [];
+    pipeline.forEach((node, i) => {
+      const short = NODE_SHORT[node] || node;
+      const isActive = node === activeNode;
+      parts.push(`<span class="pd-node${isActive ? " active" : ""}">${short}</span>`);
+      if (i < pipeline.length - 1) parts.push(`<span class="pd-arrow">→</span>`);
+    });
+    flowEl.innerHTML = parts.join("");
+  }
+
+  function updatePipelineDiagramActive(node) {
+    document.querySelectorAll("#pipeline-diagram-flow .pd-node").forEach(el => {
+      const name = el.textContent.trim();
+      const matches = NODE_SHORT[node] === name || node === name;
+      el.classList.toggle("active", matches);
+    });
+  }
+
   function setMode(mode) {
     currentMode = mode;
     const config = PIPELINE_CONFIGS[mode] || PIPELINE_CONFIGS.research;
@@ -1565,6 +1831,9 @@
     if (runLabel) runLabel.textContent = `${modeLabel} Pipeline`;
     const countEl = document.getElementById("agent-count");
     if (countEl) countEl.textContent = `2 / ${config.length}`;
+
+    // Build the mini pipeline diagram at the bottom of the agent panel
+    buildPipelineDiagram(config, null);
   }
 
   function advancePipelineToNode(node) {
@@ -1825,8 +2094,9 @@
     details.appendChild(summary);
     const ol = document.createElement("ol");
     ol.className = "sources-list";
-    sources.forEach(s => {
+    sources.forEach((s, i) => {
       const li = document.createElement("li");
+      li.setAttribute("data-cite", i + 1);
       const a = document.createElement("a");
       a.href = s.url;
       a.target = "_blank";
@@ -1838,10 +2108,37 @@
     });
     details.appendChild(ol);
     group.appendChild(details);
+
+    // Convert inline [n] citation markers in the answer bubble to superscript links.
+    const bubble = group.querySelector(".msg.bot");
+    if (bubble) {
+      bubble.innerHTML = bubble.innerHTML.replace(
+        /\[(\d+)\]/g,
+        (_, n) => {
+          const src = sources[parseInt(n) - 1];
+          const href = src ? src.url : "#";
+          return `<a href="${href}" target="_blank" rel="noopener noreferrer"
+            class="cite-sup" title="${src ? src.title : ''}">[${n}]</a>`;
+        }
+      );
+    }
     chatEl.scrollTop = chatEl.scrollHeight;
   }
 
-  function appendActions(group, rawText) {
+  function appendActions(group, rawText, pdfUrl, chartUrl, confidenceScore) {
+    // Confidence badge on the message label
+    if (confidenceScore >= 0) {
+      const lbl = group.querySelector(".msg-label");
+      if (lbl && !lbl.querySelector(".confidence-badge")) {
+        const cls  = confidenceScore >= 7 ? "high" : confidenceScore >= 4 ? "medium" : "low";
+        const text = confidenceScore >= 7 ? "HIGH" : confidenceScore >= 4 ? "MEDIUM" : "LOW";
+        const badge = document.createElement("span");
+        badge.className = `confidence-badge ${cls}`;
+        badge.textContent = `${confidenceScore}/10 · ${text}`;
+        lbl.appendChild(badge);
+      }
+    }
+
     const actions = document.createElement("div");
     actions.className = "msg-actions";
 
@@ -1869,6 +2166,144 @@
     actions.appendChild(copyBtn);
     actions.appendChild(regenBtn);
     group.appendChild(actions);
+
+    // Export row: PPTX + shareable link (only when there's meaningful content)
+    if (rawText && rawText.length > 80) {
+      const exportRow = document.createElement("div");
+      exportRow.className = "export-row";
+
+      const pptxBtn = document.createElement("button");
+      pptxBtn.className = "export-btn";
+      pptxBtn.textContent = "↓ PPTX";
+      pptxBtn.title = "Export as PowerPoint";
+      const queryTitle = capturedQuery.slice(0, 60) || "Ares Report";
+      pptxBtn.onclick = () => exportPptx(queryTitle, rawText, pptxBtn);
+      exportRow.appendChild(pptxBtn);
+
+      if (pdfUrl) {
+        const shareBtn = document.createElement("button");
+        shareBtn.className = "export-btn";
+        shareBtn.textContent = "Share link";
+        shareBtn.title = "Copy shareable link for this report";
+        shareBtn.onclick = () => shareReport(pdfUrl, queryTitle, shareBtn);
+        exportRow.appendChild(shareBtn);
+      }
+
+      if (chartUrl) {
+        const shareChartBtn = document.createElement("button");
+        shareChartBtn.className = "export-btn";
+        shareChartBtn.textContent = "Share chart";
+        shareChartBtn.onclick = () => shareReport(chartUrl, queryTitle, shareChartBtn);
+        exportRow.appendChild(shareChartBtn);
+      }
+
+      group.appendChild(exportRow);
+    }
+  }
+
+  // ── Voice input (Web Speech API) ─────────────────────────────────────
+  const micBtn = document.getElementById("mic-btn");
+  let _recognition = null;
+  let _isRecording = false;
+
+  if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    _recognition = new SR();
+    _recognition.continuous = false;
+    _recognition.interimResults = true;
+    _recognition.lang = "en-US";
+
+    _recognition.onresult = (e) => {
+      const transcript = Array.from(e.results).map(r => r[0].transcript).join("");
+      inputEl.value = transcript;
+    };
+    _recognition.onend = () => {
+      _isRecording = false;
+      micBtn.classList.remove("recording");
+      micBtn.textContent = "🎙";
+    };
+    _recognition.onerror = () => {
+      _isRecording = false;
+      micBtn.classList.remove("recording");
+      micBtn.textContent = "🎙";
+    };
+
+    micBtn.addEventListener("click", () => {
+      if (_isRecording) {
+        _recognition.stop();
+      } else {
+        _isRecording = true;
+        micBtn.classList.add("recording");
+        micBtn.textContent = "⏹";
+        _recognition.start();
+      }
+    });
+  } else {
+    micBtn.title = "Voice input not supported in this browser";
+    micBtn.style.opacity = "0.3";
+    micBtn.style.cursor = "not-allowed";
+  }
+
+  // ── Confidence badge ──────────────────────────────────────────────────
+  let _pendingConfidence = -1;
+
+  function appendConfidenceBadge(group, score) {
+    if (score < 0) return;
+    const label = document.querySelector(`#${CSS.escape(group.id || "")} .msg-label`) || group.querySelector(".msg-label");
+    if (!label) return;
+    const cls = score >= 7 ? "high" : score >= 4 ? "medium" : "low";
+    const text = score >= 7 ? "HIGH" : score >= 4 ? "MEDIUM" : "LOW";
+    const badge = document.createElement("span");
+    badge.className = `confidence-badge ${cls}`;
+    badge.textContent = `Confidence ${score}/10 · ${text}`;
+    label.appendChild(badge);
+  }
+
+  // ── PPTX export ───────────────────────────────────────────────────────
+  async function exportPptx(title, content, btn) {
+    btn.textContent = "⏳ Generating…";
+    btn.disabled = true;
+    try {
+      const res = await fetch("/export/pptx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content }),
+      });
+      if (!res.ok) { btn.textContent = "✗ Failed"; return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${title.slice(0, 40) || "report"}.pptx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      btn.textContent = "↓ PPTX";
+    } catch {
+      btn.textContent = "✗ Error";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── Shareable link ────────────────────────────────────────────────────
+  async function shareReport(fileUrl, title, btn) {
+    btn.textContent = "⏳";
+    try {
+      const res = await fetch("/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_url: fileUrl, title }),
+      });
+      if (!res.ok) { btn.textContent = "✗"; return; }
+      const data = await res.json();
+      const full = window.location.origin + data.url;
+      await navigator.clipboard.writeText(full);
+      btn.textContent = "✓ Link copied";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = "Share link"; btn.classList.remove("copied"); }, 2500);
+    } catch {
+      btn.textContent = "✗ Error";
+    }
   }
 
   // ── JSON POST (used only for /resume) ────────────────────────────────
@@ -1919,9 +2354,16 @@
 
     const params = new URLSearchParams({ message: text });
     if (threadId) params.set("thread_id", threadId);
-    // Always send doc_id — empty string explicitly clears it from LangGraph state
-    // so removing the badge stops RAG mode on the same thread.
-    params.set("doc_id", activeDocId || "");
+
+    // threadDocId is only valid for the thread it was committed to.
+    // If threadId is null we're starting a brand-new conversation —
+    // discard any doc from a previous session so it doesn't bleed in.
+    if (!threadId && activeDocIds.length === 0) threadDocId = null;
+
+    // Send comma-joined doc_ids on fresh upload; fall back to threadDocId for
+    // follow-up turns in the same thread.  Empty string clears the checkpoint.
+    const currentDocId = activeDocIds.join(",") || threadDocId || "";
+    params.set("doc_id", currentDocId);
 
     const es = new EventSource(`/chat/stream?${params}`);
     activeEs = es;
@@ -1935,6 +2377,7 @@
         case "node_start": {
           advancePipelineToNode(data.node);
           setAgentActive(data.node);
+          updatePipelineDiagramActive(data.node);
           const labels = {
             clarity:       "Checking your question...",
             intent_router: "Routing to the right pipeline...",
@@ -2043,10 +2486,26 @@
           break;
         }
 
+        case "confidence": {
+          _pendingConfidence = data.score ?? -1;
+          break;
+        }
+
         case "complete": {
           threadId = data.thread_id;
           awaitingClarification = false;
+          // Auto-dismiss the upload badge and commit the doc(s) to thread memory
+          // so follow-up questions still have context without a visible badge.
+          if (activeDocIds.length > 0) {
+            threadDocId = activeDocIds.join(",");
+            activeDocIds = [];
+            activeDocNames = [];
+            docBadge.style.display = "none";
+            attachBtn.classList.remove("has-doc");
+          }
           donePipeline();
+          // Clear active highlight in the pipeline diagram
+          document.querySelectorAll("#pipeline-diagram-flow .pd-node").forEach(el => el.classList.remove("active"));
           setTelemetry(data.telemetry);
 
           const targetGroup = botGroup;
@@ -2090,7 +2549,9 @@
             appendSources(targetGroup || botGroup, finalSources);
           }
           const finalGroup = targetGroup || botGroup;
-          if (finalGroup) appendActions(finalGroup, data.answer || rawContent);
+          const finalConf = data.confidence_score ?? _pendingConfidence;
+          if (finalGroup) appendActions(finalGroup, data.answer || rawContent, data.pdf_url, data.chart_url, finalConf);
+          _pendingConfidence = -1;
 
           if (typeof Prism !== "undefined") Prism.highlightAllUnder(botGroup || inner);
           // Refresh history sidebar after each completed turn.

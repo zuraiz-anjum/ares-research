@@ -1,11 +1,53 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
 venv/
-.env
-.pytest_cache/
 *.egg-info/
+dist/
+build/
+
+# Environment
+.env
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# macOS
 .DS_Store
-checkpoints.db
-checkpoints.db-shm
-checkpoints.db-wal
+
+# IDE
+.vscode/
+.idea/
+
+# SQLite databases (runtime state — not source code)
+*.db
+*.db-shm
+*.db-wal
+
+# Vector store (ChromaDB data, can be large)
+ares_vectorstore/
+
+# Entity memory (runtime state)
+ares_entity_memory.json
+
+# Uploads
+uploads/
+
+# Generated assets (created at runtime)
+static/charts/
+static/reports/
+static/shared/
+
+# ML model cache
+.flashrank_cache/
+
+# Server logs
+server*.log
+
+# Temp test artefacts
+test_chroma_tmp/

@@ -69,6 +69,34 @@ def search(doc_id: str, query: str, k: int = 6) -> list[str]:
     return rerank(query, candidates, k)
 
 
+def search_multi(doc_ids: list[str], query: str, k: int = 8) -> list[str]:
+    """Search across multiple documents and return top-k re-ranked chunks.
+
+    Results from all docs are pooled before re-ranking so the best passages
+    from any file float to the top.
+    """
+    col = _get_collection()
+    all_candidates: list[str] = []
+    for doc_id in doc_ids:
+        existing = col.get(where={"doc_id": doc_id})
+        if not existing["ids"]:
+            continue
+        fetch_k = min(_FETCH_K, len(existing["ids"]))
+        results = col.query(
+            query_texts=[query],
+            n_results=fetch_k,
+            where={"doc_id": doc_id},
+        )
+        candidates = results["documents"][0] if results["documents"] else []
+        all_candidates.extend(candidates)
+
+    if not all_candidates:
+        return []
+
+    from app.rag.reranker import rerank
+    return rerank(query, all_candidates, k)
+
+
 def delete_document(doc_id: str) -> None:
     """Remove all chunks belonging to doc_id from the collection."""
     col = _get_collection()

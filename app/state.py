@@ -66,6 +66,9 @@ class AgentState(TypedDict, total=False):
     # RAG: ID of the document uploaded by the user for this session.
     doc_id: str            # hex UUID returned by POST /upload
 
+    # Long-conversation memory: compressed summary of older turns.
+    conversation_summary: str
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

@@ -3,10 +3,13 @@
 Gathers company information (news, financials, recent developments) using the
 Tavily search tool, summarises the findings, and rates its own confidence in
 how well the findings answer the user's question.
+
+Uses asyncio.gather for true parallel search — no thread pool overhead.
 """
 
+import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -17,13 +20,18 @@ from app.tools.search import MOCK_RESULTS, tavily_search
 
 logger = logging.getLogger(__name__)
 
-RESEARCH_SYSTEM_PROMPT = """You are the Research Agent in a company-research assistant.
-You are given raw web search results about a company. Extract the relevant facts
-(news, financials, leadership, recent developments) that help answer the user's
-question, and summarise them clearly.
+RESEARCH_SYSTEM_PROMPT = """You are the Research Agent in an AI research workspace.
+Summarise the web search results below to answer the user's question.
 
-Then rate your confidence from 0 to 10 that the findings are sufficient and
-relevant enough to answer the user's question well."""
+RULES:
+- If the results cover MULTIPLE distinct entities (companies, products, people),
+  write a separate section for each using ## headings (e.g. ## OpenAI, ## Anthropic).
+  Never blend entity-specific figures across sections.
+- Include specific numbers, dates, and dollar amounts exactly as found.
+  Use vague language only when the source itself is vague.
+- Do NOT add information from your training knowledge.
+  If a figure is absent from the results, write "Not found in search results" for that item.
+- Rate your confidence 0-10 based solely on how well the results cover the question."""
 
 
 class ResearchResult(BaseModel):
@@ -41,7 +49,16 @@ def _get_queries(state: AgentState) -> list[str]:
     return [f"{question} {clarification}".strip() if clarification else question]
 
 
-def research_node(state: AgentState) -> dict:
+async def _fetch_one(query: str) -> tuple[list, int, list[dict]]:
+    """Run a single Tavily search asynchronously using a thread executor."""
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(None, tavily_search, query)
+    srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
+            for r in results if r.get("url")]
+    return results, len(results), srcs
+
+
+async def research_node(state: AgentState) -> dict:
     queries = _get_queries(state)
     original_question = state.get("original_query", queries[0])
 
@@ -52,28 +69,34 @@ def research_node(state: AgentState) -> dict:
             "confidence_score": 8,
         }
 
-    # Run all sub-queries in parallel — no sequential dependency between them.
-    def fetch_with_sources(query: str) -> tuple[str, int, list[dict]]:
-        results = tavily_search(query)
-        content = f"=== Results for: {query} ===\n" + "\n\n".join(r.get("content", "") for r in results)
-        srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
-                for r in results if r.get("url")]
-        return content, len(results), srcs
+    # Run all sub-queries in true parallel via asyncio.gather — no thread-pool overhead.
+    fetch_results = await asyncio.gather(*[_fetch_one(q) for q in queries])
 
-    with ThreadPoolExecutor() as executor:
-        fetch_results = list(executor.map(fetch_with_sources, queries))
-
-    all_raw = [r[0] for r in fetch_results]
     result_counts = [r[1] for r in fetch_results]
+
+    # Deduplicate sources and assign sequential citation numbers [1], [2], …
     all_sources: list[dict] = []
     seen_urls: set[str] = set()
+    url_to_num: dict[str, int] = {}
     for _, _, srcs in fetch_results:
         for s in srcs:
             if s["url"] not in seen_urls:
+                num = len(all_sources) + 1
                 all_sources.append(s)
                 seen_urls.add(s["url"])
+                url_to_num[s["url"]] = num
 
-    raw_research = "\n\n".join(all_raw)
+    # Build per-query blocks with inline citation numbers so the summariser
+    # and downstream agents can reference sources as [n].
+    raw_blocks = []
+    for query, (results, _, srcs) in zip(queries, fetch_results):
+        lines = [f"=== Results for: {query} ==="]
+        for r in results:
+            num = url_to_num.get(r.get("url", ""), "?")
+            lines.append(f"[{num}] {r.get('title','')}\n{r.get('content','')}")
+        raw_blocks.append("\n\n".join(lines))
+
+    raw_research = "\n\n".join(raw_blocks)
     raw_research, _ = truncate_to_budget(raw_research, label="research_raw")
 
     for q, count in zip(queries, result_counts):

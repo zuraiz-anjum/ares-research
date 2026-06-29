@@ -44,9 +44,11 @@ Be specific with numbers from the research.
 Be opinionated but nuanced.
 
 Rules:
-- Never fabricate numbers. If a figure is missing, write "N/A".
+- Never fabricate numbers. If a figure is missing from the research, write "N/A".
 - Keep all cell values short (≤ 15 words).
 - Prefer specific figures over adjectives ("$4.2B" beats "significant").
+- You may add inline citation numbers [n] from the research where applicable.
+- Address EVERY entity mentioned in the question — never drop one.
 """
 
 

@@ -17,10 +17,13 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import hashlib
+import secrets
+
 import aiosqlite
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Cookie, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
@@ -87,6 +90,44 @@ async def _init_db() -> None:
     logger.info(f"history_loaded count={len(rows)}")
 
 
+ANALYTICS_DB = "ares_analytics.db"
+
+
+async def _init_analytics_db() -> None:
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS usage (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TEXT NOT NULL,
+                mode       TEXT,
+                token_count INTEGER DEFAULT 0,
+                latency_ms  INTEGER DEFAULT 0,
+                provider    TEXT DEFAULT 'unknown',
+                confidence  INTEGER DEFAULT -1
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS shared_reports (
+                share_id   TEXT PRIMARY KEY,
+                file_path  TEXT NOT NULL,
+                title      TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                query       TEXT NOT NULL,
+                cron        TEXT,
+                next_run_at TEXT,
+                email       TEXT,
+                created_at  TEXT NOT NULL,
+                last_run_at TEXT
+            )
+        """)
+        await db.commit()
+
+
 async def _save_session(session: dict) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -107,7 +148,8 @@ CHECKPOINT_DB = "ares_checkpoints.db"
 
 UPLOADS_DIR = "uploads"
 _ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
-_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+_ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB (images can be larger)
 
 
 @asynccontextmanager
@@ -115,9 +157,21 @@ async def lifespan(_: FastAPI):
     import os
     os.makedirs("static/charts", exist_ok=True)
     os.makedirs("static/reports", exist_ok=True)
+    os.makedirs("static/shared", exist_ok=True)
     os.makedirs(UPLOADS_DIR, exist_ok=True)
     await _init_db()
+    await _init_analytics_db()
     validate_settings()
+
+    # Activate LangSmith tracing when key is configured.
+    if settings.langsmith_api_key:
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+        os.environ.setdefault("LANGCHAIN_API_KEY", settings.langsmith_api_key)
+        os.environ.setdefault("LANGCHAIN_PROJECT", settings.langsmith_project)
+        logger.info(f"langsmith_tracing_enabled project={settings.langsmith_project}")
+    else:
+        logger.info("langsmith_tracing_disabled (set LANGSMITH_API_KEY to enable)")
+
     logger.info("startup validation passed")
     async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DB) as checkpointer:
         _graph_mod.graph = build_graph(checkpointer)
@@ -136,6 +190,55 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# Simple cookie-based password gate.  Set APP_PASSWORD in .env to activate.
+# When APP_PASSWORD is empty, all routes are open (dev mode).
+
+_SESSION_COOKIE = "ares_session"
+_active_tokens: set[str] = set()
+
+
+def _check_auth(request: Request) -> bool:
+    """Return True if auth is disabled or the request carries a valid session."""
+    if not settings.app_password:
+        return True
+    token = request.cookies.get(_SESSION_COOKIE, "")
+    return token in _active_tokens
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/auth/login")
+async def login(req: LoginRequest, response: Response) -> dict:
+    if not settings.app_password:
+        return {"status": "ok", "auth": False}
+    expected = hashlib.sha256(settings.app_password.encode()).hexdigest()
+    given    = hashlib.sha256(req.password.encode()).hexdigest()
+    if not secrets.compare_digest(expected, given):
+        raise HTTPException(401, "Invalid password")
+    token = secrets.token_hex(32)
+    _active_tokens.add(token)
+    response.set_cookie(
+        _SESSION_COOKIE, token,
+        httponly=True, samesite="strict", max_age=86400 * 7,
+    )
+    return {"status": "ok"}
+
+
+@app.post("/auth/logout")
+async def logout(response: Response, ares_session: str = Cookie(default="")) -> dict:
+    _active_tokens.discard(ares_session)
+    response.delete_cookie(_SESSION_COOKIE)
+    return {"status": "ok"}
+
+
+@app.get("/auth/status")
+def auth_status(request: Request) -> dict:
+    return {"required": bool(settings.app_password), "authenticated": _check_auth(request)}
 
 
 @app.get("/health")
@@ -212,6 +315,8 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
 @app.post("/upload")
 @limiter.limit("10/minute")
 async def upload_document(request: Request, file: UploadFile = File(...)) -> dict:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
     ext = Path(file.filename or "").suffix.lower()
     if ext not in _ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Unsupported type '{ext}'. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}")
@@ -237,9 +342,69 @@ async def upload_document(request: Request, file: UploadFile = File(...)) -> dic
     return {"doc_id": doc_id, "filename": file.filename, "chunks": n}
 
 
+@app.post("/upload/image")
+@limiter.limit("10/minute")
+async def upload_image(request: Request, file: UploadFile = File(...)) -> dict:
+    """Upload an image for vision-model analysis in the next query."""
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(400, f"Unsupported image type '{ext}'. Allowed: {', '.join(_ALLOWED_IMAGE_EXTENSIONS)}")
+    contents = await file.read()
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File too large (max 20 MB)")
+
+    doc_id = uuid.uuid4().hex
+    save_path = os.path.join(UPLOADS_DIR, f"{doc_id}{ext}")
+    with open(save_path, "wb") as fh:
+        fh.write(contents)
+
+    # Convert image to text description via vision model and store as RAG chunks
+    try:
+        import base64
+        from langchain_core.messages import HumanMessage as _HM
+        from app.llm import get_llm
+        b64 = base64.b64encode(contents).decode()
+        mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp"}.get(ext, "image/png")
+        vision_msg = _HM(content=[
+            {"type": "text", "text": "Describe this image in full detail, including any text, charts, tables, numbers, logos, or important visual elements. Be thorough and specific."},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ])
+        # Use Gemini for vision (best free vision model available)
+        from app.config import settings as _s
+        if _s.gemini_api_key:
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            vision_llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash", google_api_key=_s.gemini_api_key)
+        elif _s.openrouter_api_key:
+            from langchain_openai import ChatOpenAI
+            vision_llm = ChatOpenAI(model="google/gemini-2.0-flash-exp:free", api_key=_s.openrouter_api_key, base_url="https://openrouter.ai/api/v1")
+        else:
+            raise ValueError("No vision-capable provider configured (need GEMINI_API_KEY or OPENROUTER_API_KEY)")
+
+        description = (await vision_llm.ainvoke([vision_msg])).content
+        logger.info(f"image_described doc_id={doc_id} chars={len(description)}")
+
+        # Store description as a searchable RAG chunk so doc_agent can retrieve it
+        from app.rag.loader import load_and_chunk as _lac
+        from app.rag.store import add_document as _add
+        image_text = f"[Image: {file.filename}]\n\n{description}"
+        chunks = [image_text[i:i+800] for i in range(0, len(image_text), 800)]
+        n = _add(doc_id, chunks, file.filename)
+        logger.info(f"image_rag_stored doc_id={doc_id} chunks={n}")
+    except Exception:
+        logger.exception(f"image_analysis_failed doc_id={doc_id}")
+        raise HTTPException(500, "Failed to analyse image. Ensure a vision-capable API key is configured.")
+
+    return {"doc_id": doc_id, "filename": file.filename, "chunks": n, "type": "image"}
+
+
 @app.post("/chat")
 @limiter.limit("20/minute")
 async def chat(request: Request, req: ChatRequest) -> dict:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
     thread_id = req.thread_id or str(uuid.uuid4())
     inputs: dict = {
         "messages": [HumanMessage(content=req.message)],
@@ -284,6 +449,11 @@ async def chat_stream(
     thread_id: str | None = None,
     doc_id: str | None = None,
 ) -> StreamingResponse:
+    if not _check_auth(request):
+        async def _deny():
+            yield f"data: {json.dumps({'type':'error','message':'Authentication required'})}\n\n"
+        return StreamingResponse(_deny(), media_type="text/event-stream")
+
     _thread_id = thread_id or str(uuid.uuid4())
 
     async def generate():
@@ -325,6 +495,7 @@ async def chat_stream(
         chart_url = ""
         pdf_url = ""
         detected_mode = "research"
+        confidence_score: int = -1
         final_output: dict = {}
         t_start = time.monotonic()
 
@@ -352,6 +523,10 @@ async def chat_stream(
                         sources = out.get("sources", [])
                         if sources:
                             yield sse({"type": "sources", "items": sources})
+                        _conf = out.get("confidence_score")
+                        if _conf is not None:
+                            confidence_score = _conf
+                            yield sse({"type": "confidence", "score": confidence_score})
                     elif name == "critic" and node == "critic":
                         critique = out.get("critique", "")
                         if critique:
@@ -437,11 +612,17 @@ async def chat_stream(
         }
         _history.appendleft(session)
         asyncio.create_task(_save_session(session))
+        asyncio.create_task(_save_usage(detected_mode, token_count, latency_ms, provider_used, confidence_score))
+
+        # Fire Slack webhook in background if configured and report-worthy.
+        if settings.slack_webhook_url and detected_mode in ("research", "report", "pdf", "comparison"):
+            asyncio.create_task(_notify_slack(message, full_answer, pdf_url, detected_mode))
 
         source_url = final_output.get("source_url", "")
         logger.info(
             f"stream_complete thread={_thread_id} "
-            f"tokens≈{token_count} provider={provider_used} ms={latency_ms}"
+            f"tokens≈{token_count} provider={provider_used} ms={latency_ms} "
+            f"confidence={confidence_score}"
         )
         yield sse({
             "type":               "complete",
@@ -456,10 +637,12 @@ async def chat_stream(
             "plan_steps":         plan_steps,
             "chart_url":          chart_url,
             "pdf_url":            pdf_url,
+            "confidence_score":   confidence_score,
             "telemetry": {
-                "token_count": token_count,
-                "provider":    provider_used,
-                "latency_ms":  latency_ms,
+                "token_count":      token_count,
+                "provider":         provider_used,
+                "latency_ms":       latency_ms,
+                "confidence_score": confidence_score,
             },
         })
 
@@ -472,6 +655,249 @@ async def chat_stream(
             "Connection":       "keep-alive",
         },
     )
+
+
+async def _save_usage(mode: str, token_count: int, latency_ms: int, provider: str, confidence: int) -> None:
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        await db.execute(
+            "INSERT INTO usage (timestamp, mode, token_count, latency_ms, provider, confidence) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (datetime.now(timezone.utc).isoformat(), mode, token_count, latency_ms, provider, confidence),
+        )
+        await db.commit()
+
+
+async def _notify_slack(query: str, answer: str, pdf_url: str, mode: str) -> None:
+    """POST a summary to the configured Slack incoming-webhook URL."""
+    try:
+        import aiohttp
+        preview = answer[:280] + ("…" if len(answer) > 280 else "")
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": f"Ares • {mode.upper()} complete"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"*Query:* {query}\n\n{preview}"}},
+        ]
+        if pdf_url:
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"<{pdf_url}|Download PDF>"}})
+        async with aiohttp.ClientSession() as session:
+            await session.post(settings.slack_webhook_url, json={"blocks": blocks})
+    except Exception:
+        logger.warning("slack_webhook_failed", exc_info=True)
+
+
+# ── Shareable report links ─────────────────────────────────────────────────────
+
+
+class ShareRequest(BaseModel):
+    file_url: str   # e.g. /static/reports/report_abc.pdf
+    title: str = ""
+
+
+@app.post("/share")
+@limiter.limit("30/minute")
+async def create_share(request: Request, req: ShareRequest) -> dict:
+    """Create a public shareable link for any generated report or chart."""
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    # Resolve file path from the URL
+    rel = req.file_url.lstrip("/")
+    file_path = Path(rel)
+    if not file_path.exists():
+        raise HTTPException(404, "File not found")
+    share_id = secrets.token_urlsafe(10)
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        await db.execute(
+            "INSERT INTO shared_reports (share_id, file_path, title, created_at) VALUES (?, ?, ?, ?)",
+            (share_id, str(file_path), req.title, datetime.now(timezone.utc).isoformat()),
+        )
+        await db.commit()
+    return {"share_id": share_id, "url": f"/r/{share_id}"}
+
+
+@app.get("/r/{share_id}")
+async def get_shared_report(share_id: str) -> FileResponse:
+    """Serve a shared report publicly (no auth required)."""
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        cursor = await db.execute(
+            "SELECT file_path, title FROM shared_reports WHERE share_id = ?", (share_id,)
+        )
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Shared report not found or expired")
+    file_path = Path(row[0])
+    if not file_path.exists():
+        raise HTTPException(410, "Report file no longer available")
+    return FileResponse(file_path, filename=file_path.name)
+
+
+# ── Usage analytics ────────────────────────────────────────────────────────────
+
+
+@app.get("/analytics")
+async def analytics(request: Request) -> dict:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        # Total requests
+        cur = await db.execute("SELECT COUNT(*) FROM usage")
+        total = (await cur.fetchone())[0]
+
+        # Requests by mode
+        cur = await db.execute(
+            "SELECT mode, COUNT(*) as cnt FROM usage GROUP BY mode ORDER BY cnt DESC"
+        )
+        by_mode = [{"mode": r[0], "count": r[1]} for r in await cur.fetchall()]
+
+        # Provider distribution
+        cur = await db.execute(
+            "SELECT provider, COUNT(*) as cnt FROM usage GROUP BY provider ORDER BY cnt DESC"
+        )
+        by_provider = [{"provider": r[0], "count": r[1]} for r in await cur.fetchall()]
+
+        # Last 7 days daily counts
+        cur = await db.execute("""
+            SELECT substr(timestamp, 1, 10) as day, COUNT(*) as cnt
+            FROM usage
+            WHERE timestamp >= datetime('now', '-7 days')
+            GROUP BY day ORDER BY day
+        """)
+        daily = [{"day": r[0], "count": r[1]} for r in await cur.fetchall()]
+
+        # Averages
+        cur = await db.execute(
+            "SELECT AVG(token_count), AVG(latency_ms), AVG(CASE WHEN confidence >= 0 THEN confidence END) FROM usage"
+        )
+        avgs = await cur.fetchone()
+        avg_tokens   = round(avgs[0] or 0, 1)
+        avg_latency  = round(avgs[1] or 0, 1)
+        avg_confidence = round(avgs[2] or 0, 1)
+
+    return {
+        "total_requests": total,
+        "by_mode":        by_mode,
+        "by_provider":    by_provider,
+        "daily_last_7":   daily,
+        "averages": {
+            "token_count":      avg_tokens,
+            "latency_ms":       avg_latency,
+            "confidence_score": avg_confidence,
+        },
+    }
+
+
+@app.get("/dashboard")
+def dashboard() -> FileResponse:
+    return FileResponse("static/dashboard.html")
+
+
+# ── PPTX export ────────────────────────────────────────────────────────────────
+
+
+class PptxRequest(BaseModel):
+    title: str
+    content: str   # markdown report content
+
+
+@app.post("/export/pptx")
+@limiter.limit("10/minute")
+async def export_pptx(request: Request, req: PptxRequest) -> FileResponse:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    try:
+        from app.agents.pptx_generator import generate_pptx
+        out_path = generate_pptx(req.title, req.content)
+        return FileResponse(out_path, filename=Path(out_path).name, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    except ImportError:
+        raise HTTPException(501, "python-pptx not installed. Run: pip install python-pptx")
+    except Exception:
+        logger.exception("pptx_export_failed")
+        raise HTTPException(500, "Failed to generate PPTX")
+
+
+# ── Scheduled research tasks ───────────────────────────────────────────────────
+
+
+class ScheduleRequest(BaseModel):
+    query: str
+    email: str = ""
+    run_now: bool = False
+
+
+@app.post("/schedule")
+@limiter.limit("10/minute")
+async def schedule_task(request: Request, req: ScheduleRequest) -> dict:
+    """Register a one-shot or recurring research task."""
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    now = datetime.now(timezone.utc).isoformat()
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        await db.execute(
+            "INSERT INTO scheduled_tasks (query, email, next_run_at, created_at) VALUES (?, ?, ?, ?)",
+            (req.query, req.email, now, now),
+        )
+        await db.commit()
+        cur = await db.execute("SELECT last_insert_rowid()")
+        task_id = (await cur.fetchone())[0]
+    if req.run_now:
+        asyncio.create_task(_run_scheduled(task_id, req.query, req.email))
+    return {"task_id": task_id, "status": "scheduled", "query": req.query}
+
+
+@app.get("/schedule")
+async def list_schedules(request: Request) -> dict:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        cur = await db.execute(
+            "SELECT id, query, email, next_run_at, created_at, last_run_at FROM scheduled_tasks ORDER BY id DESC"
+        )
+        rows = await cur.fetchall()
+    return {"tasks": [{"id": r[0], "query": r[1], "email": r[2], "next_run_at": r[3], "created_at": r[4], "last_run_at": r[5]} for r in rows]}
+
+
+async def _run_scheduled(task_id: int, query: str, email: str) -> None:
+    """Run a scheduled research query and optionally email the result."""
+    try:
+        from langchain_core.messages import HumanMessage as HM
+        thread_id = f"scheduled-{task_id}-{uuid.uuid4().hex[:8]}"
+        inputs = {"messages": [HM(content=query)], "attempts": 0, "doc_id": "", "original_query": query}
+        config = {"configurable": {"thread_id": thread_id}}
+        result = await _graph_mod.graph.ainvoke(inputs, config)
+        answer = result["messages"][-1].content if result.get("messages") else ""
+        logger.info(f"scheduled_task_complete id={task_id}")
+        if email and settings.smtp_host:
+            asyncio.create_task(_send_email(email, f"Ares Report: {query[:60]}", answer))
+        async with aiosqlite.connect(ANALYTICS_DB) as db:
+            await db.execute(
+                "UPDATE scheduled_tasks SET last_run_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), task_id),
+            )
+            await db.commit()
+    except Exception:
+        logger.exception(f"scheduled_task_failed id={task_id}")
+
+
+async def _send_email(to: str, subject: str, body: str) -> None:
+    """Send a plain-text email via configured SMTP."""
+    if not settings.smtp_host:
+        return
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"]    = settings.smtp_from
+        msg["To"]      = to
+        loop = asyncio.get_event_loop()
+        def _send():
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as s:
+                s.starttls()
+                if settings.smtp_user:
+                    s.login(settings.smtp_user, settings.smtp_password)
+                s.sendmail(settings.smtp_from, [to], msg.as_string())
+        await loop.run_in_executor(None, _send)
+        logger.info(f"email_sent to={to} subject={subject!r}")
+    except Exception:
+        logger.warning("email_send_failed", exc_info=True)
 
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

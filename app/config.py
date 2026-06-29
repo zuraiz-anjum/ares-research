@@ -25,12 +25,32 @@ class Settings(BaseSettings):
     max_search_results: int = 5
     max_validation_attempts: int = 3
     confidence_threshold: int = 6
-    max_token_budget: int = 4000
+    max_token_budget: int = 24000
     mock_mode: bool = False
 
     # --- Server ---------------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8000
+
+    # --- Auth -----------------------------------------------------------------
+    # Set APP_PASSWORD in .env to enable the password gate.
+    # Leave empty to disable auth (development default).
+    app_password: str = ""
+
+    # --- Observability --------------------------------------------------------
+    # Set LANGSMITH_API_KEY to enable LangSmith tracing of every graph run.
+    langsmith_api_key: str = ""
+    langsmith_project: str = "ares-research"
+
+    # --- Integrations ---------------------------------------------------------
+    # POST to this URL after every completed research report (Slack incoming webhook format).
+    slack_webhook_url: str = ""
+    # SMTP credentials for scheduled email report delivery.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "ares@localhost"
 
 
 settings = Settings()

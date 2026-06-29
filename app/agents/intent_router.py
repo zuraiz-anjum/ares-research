@@ -144,9 +144,13 @@ plan          — the user has a complex multi-step task or goal and needs an
                 "strategy for", "step by step", "roadmap").
 
 chat          — answered from general knowledge without live search: history,
-                science, definitions, writing help, explanations, opinions.
+                science, definitions, writing help, explanations, opinions,
+                or questions about what this system can do.
 
-document      — the user provided a URL or wants a specific web page analysed.
+document      — the user wants to read, analyse, summarise, or ask questions
+                about the content of an uploaded document or a URL.
+                Only choose this when the query is clearly about extracting or
+                understanding information from a specific file/URL.
 
 code          — write, debug, explain, or refactor code; no web search needed.
 
@@ -166,6 +170,15 @@ pdf           — research a topic AND export the result as a downloadable PDF
 
 Reply with the mode name only — no explanation, no punctuation."""
 
+ROUTER_DOC_SUFFIX = """
+
+CONTEXT: The user has an uploaded document active in this session.
+- Choose "document" ONLY if the query is asking about the content of that file
+  (e.g. "what is written in this", "does it mention X", "summarise this document").
+- If the query is about an external topic, a system capability question, or any
+  subject not requiring the file's content, choose the appropriate other mode
+  (research, chat, comparison, pdf, etc.) and ignore the uploaded file."""
+
 
 class RouteResult(BaseModel):
     mode: Literal[
@@ -175,21 +188,33 @@ class RouteResult(BaseModel):
 
 
 def intent_router_node(state: AgentState) -> dict:
-    # If the user uploaded a document for this session, always use the document pipeline.
-    if state.get("doc_id"):
-        return {"mode": "document"}
-
     question = state.get("original_query", "")
+    has_doc  = bool(state.get("doc_id"))
 
     if settings.mock_mode:
         return {"mode": "research"}
 
     q_lower = question.lower()
 
-    # Fast paths — ordered from most specific to least.
+    # URLs are always document mode regardless of other context.
     if _URL_RE.search(question):
-        logger.info("intent fast_path=document")
+        logger.info("intent fast_path=document url")
         return {"mode": "document"}
+
+    if has_doc:
+        # When a document is attached, skip keyword fast-paths (the user might
+        # say "pdf" referring to their file, not requesting an export) and let
+        # the LLM decide with full doc context.  The augmented prompt tells it
+        # to use "document" only when the question is about the file's content.
+        llm = get_llm(temperature=0).with_structured_output(RouteResult)
+        result: RouteResult = llm.invoke([
+            SystemMessage(content=ROUTER_SYSTEM_PROMPT + ROUTER_DOC_SUFFIX),
+            HumanMessage(content=question),
+        ])
+        logger.info(f"intent mode={result.mode} has_doc=true query={repr(question)}")
+        return {"mode": result.mode}
+
+    # ── No uploaded doc — fast paths ordered most-specific to least ──────
 
     # Regex word-boundary check is the primary gate; phrase-list is backup.
     if _PDF_RE.search(question) or any(sig in q_lower for sig in _PDF_SIGNALS):
@@ -232,7 +257,7 @@ def intent_router_node(state: AgentState) -> dict:
         logger.info("intent fast_path=research")
         return {"mode": "research"}
 
-    # LLM for ambiguous cases.
+    # LLM for ambiguous cases (no doc).
     llm = get_llm(temperature=0).with_structured_output(RouteResult)
     result: RouteResult = llm.invoke([
         SystemMessage(content=ROUTER_SYSTEM_PROMPT),

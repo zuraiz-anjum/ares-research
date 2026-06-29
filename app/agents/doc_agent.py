@@ -70,23 +70,33 @@ def doc_agent_node(state: AgentState) -> dict:
             "confidence_score": 8,
         }
 
-    # ── RAG path: answer from an uploaded document ─────────────────────────
+    # ── RAG path: answer from one or more uploaded documents ──────────────
     doc_id = state.get("doc_id", "")
     if doc_id:
-        from app.rag.store import search
         question = state.get("original_query", "") or message
-        chunks = search(doc_id, question, k=6)
+
+        # Support comma-separated doc_ids for multi-file sessions.
+        doc_ids = [d.strip() for d in doc_id.split(",") if d.strip()]
+
+        if len(doc_ids) == 1:
+            from app.rag.store import search
+            chunks = search(doc_ids[0], question, k=6)
+        else:
+            from app.rag.store import search_multi
+            chunks = search_multi(doc_ids, question, k=8)
+
         if chunks:
             context = "\n\n---\n\n".join(chunks)
-            logger.info(f"rag_retrieved doc_id={doc_id} chunks={len(chunks)}")
+            logger.info(f"rag_retrieved doc_ids={doc_ids} chunks={len(chunks)}")
+            doc_label = "the uploaded document" if len(doc_ids) == 1 else f"{len(doc_ids)} uploaded documents"
             return {
-                "findings": f"Relevant excerpts from the uploaded document:\n\n{context}",
+                "findings": f"Relevant excerpts from {doc_label}:\n\n{context}",
                 "raw_research": context,
                 "confidence_score": 8,
             }
-        logger.warning(f"rag_no_results doc_id={doc_id}")
+        logger.warning(f"rag_no_results doc_ids={doc_ids}")
         return {
-            "findings": "No relevant content was found in the uploaded document for your question. Try rephrasing.",
+            "findings": "No relevant content was found in the uploaded document(s) for your question. Try rephrasing.",
             "raw_research": "",
             "confidence_score": 2,
         }

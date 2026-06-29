@@ -55,6 +55,11 @@ class ClarityVerdict(BaseModel):
 def clarity_node(state: AgentState) -> dict:
     user_query = state["messages"][-1].content
 
+    # When a document is attached, the query refers to that document — no need
+    # to ask for clarification regardless of how vague the wording is.
+    if state.get("doc_id"):
+        return {"clarity_status": "clear", "original_query": user_query}
+
     if settings.mock_mode:
         return {"clarity_status": "clear", "original_query": user_query}
 

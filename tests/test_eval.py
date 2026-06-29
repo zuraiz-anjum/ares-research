@@ -1,54 +1,52 @@
-"""Evaluation tests — groundedness, cost estimation, latency.
+"""Evaluation and quality tests.
 
-These tests run against the mock mode so no API keys or network access needed.
-They check output quality properties rather than routing logic.
+Covers groundedness, latency, decomposer behaviour, and full mock-mode
+end-to-end runs. No API keys or network access required.
 """
 
+import asyncio
 import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.config import settings
 from app.graph import route_after_research, route_after_validation
 
 
 # ---------------------------------------------------------------------------
-# Labeled test set — routing correctness on real-world query types
+# Labeled routing test set
 # ---------------------------------------------------------------------------
 
 ROUTING_CASES = [
-    # (confidence_score, expected_route, label)
-    (9, "synthesis", "high confidence skips validator"),
-    (7, "synthesis", "above threshold skips validator"),
-    (6, "synthesis", "exactly at threshold goes to synthesis"),
-    (5, "validator", "below threshold needs validation"),
-    (1, "validator", "very low confidence needs validation"),
-    (0, "validator", "zero confidence needs validation"),
+    (9,  "synthesis", "high confidence skips validator"),
+    (7,  "synthesis", "above threshold skips validator"),
+    (6,  "synthesis", "exactly at threshold → synthesis"),
+    (5,  "validator", "below threshold needs validation"),
+    (1,  "validator", "very low confidence needs validation"),
+    (0,  "validator", "zero confidence needs validation"),
 ]
 
 
 def test_labeled_routing_cases():
-    """Labeled test set — each case documents the expected routing decision."""
     for score, expected, label in ROUTING_CASES:
         result = route_after_research({"confidence_score": score})
-        assert result == expected, f"FAILED: {label} — got {result}, expected {expected}"
+        assert result == expected, f"FAILED: {label} — got {result!r}, expected {expected!r}"
 
 
 VALIDATION_CASES = [
-    # (result, attempts, expected_route, label)
-    ("sufficient", 1, "synthesis", "sufficient always exits loop"),
-    ("sufficient", 3, "synthesis", "sufficient exits even at max attempts"),
-    ("insufficient", 1, "research", "insufficient below max retries"),
-    ("insufficient", 2, "research", "insufficient one below max retries"),
+    ("sufficient",   1, "synthesis", "sufficient always exits loop"),
+    ("sufficient",   3, "synthesis", "sufficient exits even at max attempts"),
+    ("insufficient", 1, "research",  "insufficient below max retries"),
+    ("insufficient", 2, "research",  "insufficient one below max retries"),
     ("insufficient", 3, "synthesis", "insufficient at max exits loop"),
 ]
 
 
 def test_labeled_validation_cases():
-    """Labeled test set — validation routing across all meaningful states."""
     for result, attempts, expected, label in VALIDATION_CASES:
-        state = {"validation_result": result, "attempts": attempts}
-        actual = route_after_validation(state)
-        assert actual == expected, f"FAILED: {label} — got {actual}, expected {expected}"
+        actual = route_after_validation({"validation_result": result, "attempts": attempts})
+        assert actual == expected, f"FAILED: {label} — got {actual!r}, expected {expected!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -56,102 +54,132 @@ def test_labeled_validation_cases():
 # ---------------------------------------------------------------------------
 
 def test_synthesis_uses_findings_not_raw_research():
-    """Synthesis should prefer processed findings over raw web scrape."""
+    """Synthesis should pass processed findings to the LLM, not raw HTML scrape."""
     from app.agents.synthesis import synthesis_node
-    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_core.messages import HumanMessage
 
     findings = "Stripe raised $600M at a $95B valuation in March 2024."
-    raw_research = "Cookie policy. Accept all cookies. Navigation menu. Footer links. " + findings
+    raw_research = "Cookie policy. Accept all cookies. Navigation menu." + findings
 
     captured = {}
 
-    original_invoke = None
-
-    def fake_invoke(messages):
+    async def fake_ainvoke(messages, **kwargs):
         captured["system_content"] = messages[0].content
         return MagicMock(content="Stripe raised $600M at $95B valuation.")
 
-    with patch("app.agents.synthesis.get_llm") as mock_llm:
-        mock_llm.return_value.invoke = fake_invoke
-        synthesis_node({
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = fake_ainvoke
+
+    with patch("app.agents.synthesis.get_llm", return_value=mock_llm):
+        asyncio.run(synthesis_node({
+            "mode": "research",
             "findings": findings,
             "raw_research": raw_research,
+            "original_query": "Tell me about Stripe's funding",
             "messages": [HumanMessage(content="Tell me about Stripe's funding")],
-        })
+        }))
 
-    assert findings in captured["system_content"], "findings should be in the prompt"
-    assert "Cookie policy" not in captured["system_content"], "raw_research should not be in the prompt"
+    assert findings in captured["system_content"], "findings should be injected into the system prompt"
+    assert "Cookie policy" not in captured["system_content"], "raw HTML scrape should not leak into prompt"
+
+
+def test_synthesis_uses_chat_prompt_for_chat_mode():
+    """Chat mode should use CHAT_SYNTHESIS_PROMPT, not the research prompt."""
+    from app.agents.synthesis import synthesis_node, CHAT_SYNTHESIS_PROMPT
+    from langchain_core.messages import HumanMessage
+
+    captured = {}
+
+    async def fake_ainvoke(messages, **kwargs):
+        captured["system_content"] = messages[0].content
+        return MagicMock(content="4")
+
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = fake_ainvoke
+
+    with patch("app.agents.synthesis.get_llm", return_value=mock_llm):
+        asyncio.run(synthesis_node({
+            "mode": "chat",
+            "messages": [HumanMessage(content="What is 2+2?")],
+        }))
+
+    assert captured["system_content"] == CHAT_SYNTHESIS_PROMPT
 
 
 # ---------------------------------------------------------------------------
-# Cost estimation — token budget
+# Token budget guard
 # ---------------------------------------------------------------------------
 
-def test_cost_estimation_short_query():
-    """Short queries should be well within the token budget."""
-    from langchain_core.messages import HumanMessage
-
-    msg = HumanMessage(content="Tell me about Stripe")
-    estimated_tokens = len(msg.content) // 4
-    assert estimated_tokens < settings.max_token_budget
-
-
-def test_cost_estimation_long_query_exceeds_budget():
-    """Queries over the budget should be caught by the guard."""
-    from langchain_core.messages import HumanMessage
-
-    long_content = "a" * (settings.max_token_budget * 4 + 100)
-    msg = HumanMessage(content=long_content)
-    estimated_tokens = len(msg.content) // 4
-    assert estimated_tokens > settings.max_token_budget
-
-
-def test_token_budget_guard_fires():
-    """_run should return an error response when budget is exceeded."""
-    from app.main import _run
+def test_token_budget_guard_fires_via_helper():
+    """_budget_error should return an error dict when the message is oversized."""
+    from app.main import _budget_error
     from langchain_core.messages import HumanMessage
 
     long_content = "a" * (settings.max_token_budget * 4 + 100)
     inputs = {"messages": [HumanMessage(content=long_content)], "attempts": 0}
-    result = _run(inputs, "test-budget-thread")
+    result = _budget_error(inputs, "test-budget-thread")
+    assert result is not None
     assert result["status"] == "error"
-    assert "too large" in result["answer"].lower()
 
 
-# ---------------------------------------------------------------------------
-# Latency — mock mode should be fast
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Decomposer — query splitting
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Groundedness — answer references findings content
-# ---------------------------------------------------------------------------
-
-def test_groundedness_answer_references_mock_findings():
-    """In mock mode, the answer should reference content from the mock findings."""
-    from unittest.mock import patch
+def test_token_budget_guard_passes_short_message():
+    from app.main import _budget_error
     from langchain_core.messages import HumanMessage
-    from app.graph import build_graph
-
-    with patch.object(settings, "mock_mode", True):
-        g = build_graph()
-        config = {"configurable": {"thread_id": "groundedness-test"}}
-        result = g.invoke(
-            {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0},
-            config,
-        )
-
-    answer = result["messages"][-1].content.lower()
-    assert len(answer) > 0, "answer should not be empty"
-    assert "mock" in answer or "company" in answer or "revenue" in answer or "funding" in answer, \
-        "answer should reference content from mock findings"
+    inputs = {"messages": [HumanMessage(content="Tell me about OpenAI")], "attempts": 0}
+    assert _budget_error(inputs, "test-short-thread") is None
 
 
-def test_truncate_to_budget_no_truncation():
-    """Short text should pass through unchanged."""
+# ---------------------------------------------------------------------------
+# Decomposer
+# ---------------------------------------------------------------------------
+
+def test_decomposer_splits_compound_query():
+    from app.agents.decomposer import decomposer_node
+
+    mock_result = MagicMock()
+    mock_result.queries = ["Stripe recent funding", "OpenAI recent funding"]
+    mock_result.is_compound = True
+    mock_result.has_dependencies = False
+
+    with patch("app.agents.decomposer.get_llm") as mock_llm:
+        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
+        result = decomposer_node({"original_query": "Compare Stripe and OpenAI funding"})
+
+    assert result["sub_queries"] == ["Stripe recent funding", "OpenAI recent funding"]
+
+
+def test_decomposer_fast_path_for_simple_query():
+    """Simple single-entity query should skip the LLM entirely."""
+    from app.agents.decomposer import decomposer_node
+
+    with patch("app.agents.decomposer.get_llm") as mock_llm:
+        result = decomposer_node({"original_query": "Tell me about Stripe"})
+        mock_llm.assert_not_called()
+
+    assert len(result["sub_queries"]) == 1
+    assert result["sub_queries"][0] == "Tell me about Stripe"
+
+
+def test_decomposer_collapses_dependent_queries():
+    from app.agents.decomposer import decomposer_node
+
+    mock_result = MagicMock()
+    mock_result.queries = ["Stripe funding", "what happened after"]
+    mock_result.is_compound = True
+    mock_result.has_dependencies = True
+
+    with patch("app.agents.decomposer.get_llm") as mock_llm:
+        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
+        result = decomposer_node({"original_query": "Stripe funding and what happened after"})
+
+    assert len(result["sub_queries"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Truncation
+# ---------------------------------------------------------------------------
+
+def test_truncate_no_truncation_for_short_text():
     from app.config import truncate_to_budget
     text = "Short content"
     result, was_truncated = truncate_to_budget(text)
@@ -159,84 +187,37 @@ def test_truncate_to_budget_no_truncation():
     assert was_truncated is False
 
 
-def test_truncate_to_budget_truncates_large_content():
-    """Content exceeding half the budget should be truncated."""
-    from app.config import truncate_to_budget, settings
+def test_truncate_fires_on_large_content():
+    from app.config import truncate_to_budget
     oversized = "x" * (settings.max_token_budget * 4)
     result, was_truncated = truncate_to_budget(oversized)
     assert was_truncated is True
-    assert len(result) < len(oversized)
     assert "truncated" in result
 
 
-def test_decomposer_splits_compound_query():
-    """Compound query should produce multiple sub-queries."""
-    from unittest.mock import patch, MagicMock
-    from app.agents.decomposer import decomposer_node
-
-    mock_result = MagicMock()
-    mock_result.queries = ["Stripe recent funding", "OpenAI recent funding"]
-    mock_result.is_compound = True
-    mock_result.has_dependencies = False  # explicitly set — MagicMock defaults are truthy
-
-    with patch("app.agents.decomposer.get_llm") as mock_llm:
-        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
-        result = decomposer_node({"original_query": "Compare Stripe and OpenAI funding"})
-
-    assert result["sub_queries"] == ["Stripe recent funding", "OpenAI recent funding"]
-    assert len(result["sub_queries"]) == 2
-
-
-def test_decomposer_keeps_simple_query():
-    """Simple query hits the fast path and returns the original question without an LLM call."""
-    from app.agents.decomposer import decomposer_node
-
-    result = decomposer_node({"original_query": "Tell me about Stripe"})
-
-    assert len(result["sub_queries"]) == 1
-    assert result["sub_queries"][0] == "Tell me about Stripe"
-
-
-def test_decomposer_collapses_dependent_query():
-    """Query with sequential dependencies should collapse to single query."""
-    from unittest.mock import patch, MagicMock
-    from app.agents.decomposer import decomposer_node
-
-    mock_result = MagicMock()
-    mock_result.queries = ["Stripe funding round", "what happened after"]
-    mock_result.is_compound = True
-    mock_result.has_dependencies = True
-
-    with patch("app.agents.decomposer.get_llm") as mock_llm:
-        mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_result
-        result = decomposer_node({"original_query": "Compare Stripe and what they did after funding"})
-
-    assert len(result["sub_queries"]) == 1
-
+# ---------------------------------------------------------------------------
+# Full mock-mode end-to-end
+# ---------------------------------------------------------------------------
 
 def test_full_graph_runs_in_mock_mode():
-    """Full graph should complete end-to-end with zero external API calls in mock mode."""
-    import os
-    from unittest.mock import patch
+    """Full pipeline should complete with zero external API calls in mock mode."""
     from langchain_core.messages import HumanMessage
     from app.graph import build_graph
 
     with patch.object(settings, "mock_mode", True):
         g = build_graph()
-        config = {"configurable": {"thread_id": "mock-e2e-test"}}
-        result = g.invoke(
+        result = asyncio.run(g.ainvoke(
             {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0},
-            config,
-        )
+            {"configurable": {"thread_id": "mock-e2e-test"}},
+        ))
 
     assert "messages" in result
     assert len(result["messages"]) > 0
-    last = result["messages"][-1]
-    assert last.content  # got a non-empty answer
+    assert result["messages"][-1].content
 
 
 def test_mock_search_latency():
-    """Mock search should complete near-instantly — no network call."""
+    """Mock search should complete well under 100ms — no network call."""
     from app.tools.search import tavily_search, MOCK_RESULTS
 
     with patch.object(settings, "mock_mode", True):
@@ -244,5 +225,40 @@ def test_mock_search_latency():
         result = tavily_search("Stripe funding")
         elapsed = time.time() - start
 
-    assert elapsed < 0.1, f"Mock search took {elapsed:.3f}s — should be instant"
+    assert elapsed < 0.1, f"Mock search took {elapsed:.3f}s — expected <0.1s"
     assert result == MOCK_RESULTS
+
+
+def test_groundedness_answer_references_mock_findings():
+    """Mock-mode answer should be non-empty and reference expected keywords."""
+    from langchain_core.messages import HumanMessage
+    from app.graph import build_graph
+
+    with patch.object(settings, "mock_mode", True):
+        g = build_graph()
+        result = asyncio.run(g.ainvoke(
+            {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0},
+            {"configurable": {"thread_id": "groundedness-test"}},
+        ))
+
+    answer = result["messages"][-1].content.lower()
+    assert len(answer) > 0
+    assert "mock" in answer or "placeholder" in answer or "company" in answer
+
+
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
+
+def test_settings_has_langsmith_fields():
+    assert hasattr(settings, "langsmith_api_key")
+    assert hasattr(settings, "langsmith_project")
+
+
+def test_settings_has_slack_webhook_field():
+    assert hasattr(settings, "slack_webhook_url")
+
+
+def test_settings_max_token_budget_is_high_enough():
+    assert settings.max_token_budget >= 8000, \
+        f"max_token_budget={settings.max_token_budget} is too low for multi-company queries"

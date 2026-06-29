@@ -20,6 +20,21 @@ def test_graph_compiles():
     assert graph is not None
 
 
+def test_graph_has_expected_nodes():
+    """All 19 agent nodes should be registered in the compiled graph."""
+    graph = build_graph()
+    nodes = set(graph.get_graph().nodes.keys())
+    expected = {
+        "clarity", "intent_router", "decomposer", "research", "validator",
+        "synthesis", "doc_agent", "fact_checker", "critic", "suggestions",
+        "report_writer", "pdf_generator", "chart_writer", "data_analyst",
+        "comparison_matrix", "debate_writer", "email_drafter", "code_writer",
+        "planner",
+    }
+    missing = expected - nodes
+    assert not missing, f"Missing nodes: {missing}"
+
+
 # ---------------------------------------------------------------------------
 # route_after_research — confidence-based routing
 # ---------------------------------------------------------------------------
@@ -35,13 +50,12 @@ def test_low_confidence_routes_to_validator():
 
 
 def test_confidence_at_threshold_routes_to_synthesis():
-    """Score exactly at threshold should go to synthesis, not validator (>= fix)."""
+    """Score exactly at threshold should go to synthesis (>= boundary)."""
     state = {"confidence_score": settings.confidence_threshold}
     assert route_after_research(state) == "synthesis"
 
 
 def test_confidence_one_below_threshold_routes_to_validator():
-    """Score one below threshold should still go to validator."""
     state = {"confidence_score": settings.confidence_threshold - 1}
     assert route_after_research(state) == "validator"
 
@@ -54,6 +68,26 @@ def test_zero_confidence_routes_to_validator():
 def test_max_confidence_routes_to_synthesis():
     state = {"confidence_score": 10}
     assert route_after_research(state) == "synthesis"
+
+
+# ---------------------------------------------------------------------------
+# route_after_research — mode-aware routing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("mode,expected", [
+    ("research",      "synthesis"),
+    ("plan",          "synthesis"),
+    ("report",        "report_writer"),
+    ("pdf",           "report_writer"),
+    ("data_analysis", "data_analyst"),
+    ("comparison",    "comparison_matrix"),
+    ("debate",        "debate_writer"),
+    ("email",         "email_drafter"),
+])
+def test_mode_routing_after_research(mode, expected):
+    """High-confidence research routes to the correct output node per mode."""
+    state = {"confidence_score": 10, "mode": mode}
+    assert route_after_research(state) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -71,19 +105,17 @@ def test_insufficient_validation_loops_back_to_research():
 
 
 def test_max_attempts_reached_routes_to_synthesis():
-    """When attempts hit the max, stop looping and go to synthesis."""
+    """When attempts hit the max, stop looping and proceed."""
     state = {"validation_result": "insufficient", "attempts": settings.max_validation_attempts}
     assert route_after_validation(state) == "synthesis"
 
 
 def test_attempts_one_below_max_still_loops():
-    """One attempt below max should still retry research."""
     state = {"validation_result": "insufficient", "attempts": settings.max_validation_attempts - 1}
     assert route_after_validation(state) == "research"
 
 
 def test_sufficient_at_max_attempts_routes_to_synthesis():
-    """Sufficient result should always go to synthesis regardless of attempt count."""
     state = {"validation_result": "sufficient", "attempts": settings.max_validation_attempts}
     assert route_after_validation(state) == "synthesis"
 
@@ -93,7 +125,6 @@ def test_sufficient_at_max_attempts_routes_to_synthesis():
 # ---------------------------------------------------------------------------
 
 def test_mock_mode_tavily_returns_fake_results():
-    """With MOCK_MODE=true, tavily_search should return mock data without hitting the API."""
     with patch.object(settings, "mock_mode", True):
         from app.tools.search import tavily_search, MOCK_RESULTS
         results = tavily_search("test query")
@@ -103,24 +134,49 @@ def test_mock_mode_tavily_returns_fake_results():
 
 
 # ---------------------------------------------------------------------------
-# Token budget guard
+# Token budget
 # ---------------------------------------------------------------------------
 
-def test_token_budget_not_exceeded():
-    """Short message should pass the budget check."""
-    from app.main import _run
+def test_token_budget_not_exceeded_for_short_message():
     from langchain_core.messages import HumanMessage
-    from langgraph.types import Command
-
     short_msg = HumanMessage(content="hi")
     total_tokens = len(short_msg.content) // 4
     assert total_tokens <= settings.max_token_budget
 
 
-def test_token_budget_calculation():
-    """Token estimation uses character count // 4."""
+def test_budget_error_helper_returns_none_for_short_messages():
+    from app.main import _budget_error
     from langchain_core.messages import HumanMessage
+    inputs = {"messages": [HumanMessage(content="Tell me about Stripe")], "attempts": 0}
+    assert _budget_error(inputs, "test-thread") is None
 
-    msg = HumanMessage(content="a" * 400)
-    estimated = len(msg.content) // 4
-    assert estimated == 100
+
+def test_budget_error_helper_fires_on_oversize_input():
+    from app.main import _budget_error
+    from langchain_core.messages import HumanMessage
+    huge = HumanMessage(content="x" * (settings.max_token_budget * 4 + 100))
+    inputs = {"messages": [huge], "attempts": 0}
+    result = _budget_error(inputs, "test-thread")
+    assert result is not None
+    assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Truncation utility
+# ---------------------------------------------------------------------------
+
+def test_truncate_no_truncation_for_short_text():
+    from app.config import truncate_to_budget
+    text = "Short content"
+    result, was_truncated = truncate_to_budget(text)
+    assert result == text
+    assert was_truncated is False
+
+
+def test_truncate_fires_on_large_content():
+    from app.config import truncate_to_budget
+    oversized = "x" * (settings.max_token_budget * 4)
+    result, was_truncated = truncate_to_budget(oversized)
+    assert was_truncated is True
+    assert len(result) < len(oversized)
+    assert "truncated" in result

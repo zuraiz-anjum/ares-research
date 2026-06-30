@@ -197,7 +197,214 @@ def _md_to_flowables(text: str, styles: dict) -> list:
     return flowables
 
 
+def _build_academic_styles():
+    """Academic paper styles — Times-Roman body, clean hierarchy."""
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+    from reportlab.lib.styles import ParagraphStyle
+
+    C = colors.HexColor
+
+    return {
+        "paper_title": ParagraphStyle("paper_title",
+            fontName="Times-Bold", fontSize=18, leading=24,
+            alignment=TA_CENTER, spaceAfter=10, textColor=C("#111111")),
+        "paper_authors": ParagraphStyle("paper_authors",
+            fontName="Times-Roman", fontSize=10, leading=14,
+            alignment=TA_CENTER, spaceAfter=4, textColor=C("#444444")),
+        "abstract_label": ParagraphStyle("abstract_label",
+            fontName="Times-Bold", fontSize=9.5, leading=13,
+            alignment=TA_CENTER, spaceAfter=4, textColor=C("#111111")),
+        "abstract_body": ParagraphStyle("abstract_body",
+            fontName="Times-Roman", fontSize=9.5, leading=14,
+            alignment=TA_JUSTIFY, leftIndent=36, rightIndent=36,
+            spaceAfter=6, textColor=C("#222222")),
+        "keywords_line": ParagraphStyle("keywords_line",
+            fontName="Times-Roman", fontSize=9, leading=13,
+            alignment=TA_CENTER, spaceAfter=12, textColor=C("#555555")),
+        "h1": ParagraphStyle("h1",
+            fontName="Times-Bold", fontSize=12, leading=16,
+            spaceBefore=14, spaceAfter=5, textColor=C("#111111")),
+        "h2": ParagraphStyle("h2",
+            fontName="Times-Bold", fontSize=10.5, leading=14,
+            spaceBefore=10, spaceAfter=4, textColor=C("#222222")),
+        "body": ParagraphStyle("body",
+            fontName="Times-Roman", fontSize=10, leading=15,
+            alignment=TA_JUSTIFY, spaceAfter=5, textColor=C("#222222")),
+        "figure_caption": ParagraphStyle("figure_caption",
+            fontName="Times-Roman", fontSize=9, leading=13,
+            alignment=TA_CENTER, spaceAfter=8, textColor=C("#555555"),
+            fontStyle="italic"),
+        "ref_entry": ParagraphStyle("ref_entry",
+            fontName="Times-Roman", fontSize=9, leading=13,
+            leftIndent=18, firstLineIndent=-18, spaceAfter=4,
+            textColor=C("#222222")),
+        "footer": ParagraphStyle("footer",
+            fontName="Times-Roman", fontSize=8,
+            alignment=TA_CENTER, textColor=C("#aaaaaa")),
+    }
+
+
+def _academic_md_to_flowables(text: str, styles: dict) -> list:
+    """Parse the academic_writer markdown into ReportLab flowables."""
+    from reportlab.lib import colors
+    from reportlab.platypus import HRFlowable, Paragraph, Spacer
+
+    C = colors.HexColor
+    flowables = []
+    lines = text.split("\n")
+    in_refs = False
+
+    for line in lines:
+        line = line.rstrip()
+
+        if not line:
+            flowables.append(Spacer(1, 4))
+            continue
+
+        # Skip the title (handled separately), abstract, and keywords lines
+        if line.startswith("# ") or line.startswith("**Abstract:**") or line.startswith("**Keywords:**"):
+            continue
+
+        if line.strip() == "---":
+            flowables.append(HRFlowable(width="100%", thickness=0.5,
+                                        color=C("#aaaaaa"), spaceBefore=6, spaceAfter=8))
+            continue
+
+        # Section headings — treat ### as h2 (subsection), ## as h1 (section)
+        if line.startswith("### "):
+            text_val = line[4:]
+            flowables.append(Paragraph(_inline_md(text_val), styles["h2"]))
+            in_refs = False
+            continue
+
+        if line.startswith("## "):
+            heading = line[3:]
+            in_refs = heading.strip().lower() in ("references", "reference list")
+            flowables.append(Paragraph(_inline_md(heading), styles["h1"]))
+            continue
+
+        # Reference entries [N] ...
+        if in_refs and re.match(r"^\[\d+\]", line):
+            flowables.append(Paragraph(_inline_md(line), styles["ref_entry"]))
+            continue
+
+        # Body text
+        if line and not line.startswith("---"):
+            flowables.append(Paragraph(_inline_md(line), styles["body"]))
+
+    return flowables
+
+
+def _generate_academic_pdf(state: dict) -> str:
+    """Render an academic-style PDF. Returns the file path."""
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm, inch
+    from reportlab.platypus import (
+        HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer,
+    )
+
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+
+    report_text  = state.get("report_content") or state["messages"][-1].content
+    query        = state.get("original_query", "Research Paper")
+    abstract     = state.get("paper_abstract", "")
+    keywords     = state.get("paper_keywords", "")
+
+    # Extract title from the first # line of the paper
+    title = query
+    for line in report_text.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+
+    filename = f"ares_academic_{uuid.uuid4().hex[:8]}.pdf"
+    filepath = os.path.join(REPORTS_DIR, filename)
+
+    styles = _build_academic_styles()
+    C = colors.HexColor
+
+    doc = SimpleDocTemplate(
+        filepath, pagesize=A4,
+        leftMargin=2.8*cm, rightMargin=2.8*cm,
+        topMargin=3.0*cm,  bottomMargin=3.0*cm,
+        title=title,
+        author="Ares — Autonomous Research & Evidence System",
+    )
+
+    story = []
+
+    # ── Title block ────────────────────────────────────────────────────────
+    story.append(Paragraph(_inline_md(title), styles["paper_title"]))
+    story.append(Spacer(1, 4))
+
+    ts = datetime.utcnow().strftime("%B %Y")
+    story.append(Paragraph(
+        f"Ares Research System  ·  Generated {ts}",
+        styles["paper_authors"],
+    ))
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=1.0,
+                            color=C("#111111"), spaceBefore=0, spaceAfter=8))
+
+    # ── Abstract ───────────────────────────────────────────────────────────
+    if abstract:
+        story.append(Paragraph("ABSTRACT", styles["abstract_label"]))
+        story.append(Paragraph(_inline_md(abstract), styles["abstract_body"]))
+        story.append(Spacer(1, 4))
+
+    # ── Keywords ───────────────────────────────────────────────────────────
+    if keywords:
+        story.append(Paragraph(
+            f"<b>Keywords:</b> {_inline_md(keywords)}",
+            styles["keywords_line"],
+        ))
+
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                            color=C("#aaaaaa"), spaceBefore=4, spaceAfter=10))
+
+    # ── Paper body (sections 1-5) ──────────────────────────────────────────
+    story.extend(_academic_md_to_flowables(report_text, styles))
+
+    # ── Chart as Figure 1 ──────────────────────────────────────────────────
+    chart_url = state.get("chart_url", "")
+    if chart_url:
+        chart_path = chart_url.lstrip("/")
+        if os.path.exists(chart_path):
+            story.append(Spacer(1, 12))
+            story.append(HRFlowable(width="100%", thickness=0.5,
+                                    color=C("#cccccc"), spaceBefore=4, spaceAfter=8))
+            story.append(Image(chart_path, width=5.8 * inch, height=3.1 * inch))
+            story.append(Paragraph(
+                f"<i>Figure 1: Data visualisation for \"{_inline_md(query[:60])}\"</i>",
+                styles["figure_caption"],
+            ))
+
+    # ── Footer ────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 20))
+    story.append(HRFlowable(width="100%", thickness=0.5,
+                            color=C("#cccccc"), spaceAfter=6))
+    story.append(Paragraph(
+        "Generated by Ares · Autonomous Research &amp; Evidence System",
+        styles["footer"],
+    ))
+
+    doc.build(story)
+    return filepath
+
+
 def pdf_generator_node(state: AgentState) -> dict:
+    # Academic mode uses a separate renderer with Times-Roman paper styling.
+    if state.get("mode") == "academic":
+        filepath = _generate_academic_pdf(state)
+        pdf_url  = f"/static/reports/{os.path.basename(filepath)}"
+        from langchain_core.messages import AIMessage
+        return {
+            "pdf_url": pdf_url,
+            "messages": [AIMessage(content=f"Academic paper PDF ready: {pdf_url}")],
+        }
+
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm, inch

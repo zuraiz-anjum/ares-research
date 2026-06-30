@@ -54,11 +54,17 @@ class AgentState(TypedDict, total=False):
     # even after chart_writer appends its own message to state["messages"]).
     report_content: str
 
-    # Chart writer output.
-    chart_url: str        # public path to the rendered PNG
+    # Draft critic / writer revision loop.
+    revision_count:    int   # number of times draft_critic has run this turn
+    revision_feedback: str   # critic's feedback for the next writer pass; "" = accepted
+    draft_score:       int   # quality score 1-10 from the most recent critic run
+
+    # Chart writer / data_visualizer output.
+    chart_url: str         # public path to the primary PNG (backward compat)
+    chart_urls: list       # list[str] — all PNGs from data_visualizer / survey_analyst
 
     # PDF generator output.
-    pdf_url: str          # public path to the generated PDF
+    pdf_url: str           # public path to the generated PDF
 
     # Research sources collected from Tavily results.
     sources: list          # list[{"title": str, "url": str}]
@@ -66,8 +72,15 @@ class AgentState(TypedDict, total=False):
     # RAG: ID of the document uploaded by the user for this session.
     doc_id: str            # hex UUID returned by POST /upload
 
+    # Survey mode: True when the attached file is a CSV/Excel survey.
+    is_survey: bool
+
     # Long-conversation memory: compressed summary of older turns.
     conversation_summary: str
+
+    # Academic writer output (extracted from the paper for PDF rendering).
+    paper_abstract: str   # 150-200 word abstract block
+    paper_keywords: str   # comma-separated keyword list
 
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn

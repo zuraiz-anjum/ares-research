@@ -40,6 +40,7 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from app.config import settings, validate_settings
 import app.graph as _graph_mod
 from app.graph import build_graph
+from app.utils.checkpoint import set_thread_id, _TABLE_DDL, ANALYTICS_DB as _CP_ANALYTICS_DB
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,6 +126,7 @@ async def _init_analytics_db() -> None:
                 last_run_at TEXT
             )
         """)
+        await db.execute(_TABLE_DDL)
         await db.commit()
 
 
@@ -147,9 +149,10 @@ CHECKPOINT_DB = "ares_checkpoints.db"
 
 
 UPLOADS_DIR = "uploads"
-_ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
-_ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
-_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB (images can be larger)
+_ALLOWED_EXTENSIONS       = {".pdf", ".txt", ".md", ".docx"}
+_ALLOWED_SURVEY_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+_ALLOWED_IMAGE_EXTENSIONS  = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+_MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 @asynccontextmanager
@@ -250,6 +253,7 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
     doc_id: str | None = None     # set when the user has uploaded a document
+    is_survey: bool = False       # True when the uploaded file is CSV/Excel
 
 
 class ResumeRequest(BaseModel):
@@ -272,6 +276,7 @@ def _budget_error(inputs: dict, thread_id: str) -> dict | None:
 
 async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
     config = {"configurable": {"thread_id": thread_id}}
+    set_thread_id(thread_id)
     if isinstance(inputs, dict):
         err = _budget_error(inputs, thread_id)
         if err:
@@ -300,15 +305,22 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
 
     answer = result["messages"][-1].content
-    sub_queries = result.get("sub_queries", [])
-    critique = result.get("critique", "")
-    source_url = result.get("source_url", "")
-    suggestions = result.get("suggestions", [])
     logger.info(f"request_complete thread={thread_id}")
     return {
-        "status": "complete", "answer": answer, "thread_id": thread_id,
-        "sub_queries": sub_queries, "critique": critique,
-        "source_url": source_url, "suggestions": suggestions,
+        "status":             "complete",
+        "answer":             answer,
+        "thread_id":          thread_id,
+        "sub_queries":        result.get("sub_queries", []),
+        "critique":           result.get("critique", ""),
+        "source_url":         result.get("source_url", ""),
+        "suggestions":        result.get("suggestions", []),
+        "pdf_url":            result.get("pdf_url", ""),
+        "chart_url":          result.get("chart_url", ""),
+        "chart_urls":         result.get("chart_urls") or [],
+        "fact_check_results": result.get("fact_check_results", []),
+        "plan_steps":         result.get("plan_steps", []),
+        "confidence_score":   result.get("confidence_score", -1),
+        "sources":            result.get("sources", []),
     }
 
 
@@ -318,28 +330,55 @@ async def upload_document(request: Request, file: UploadFile = File(...)) -> dic
     if not _check_auth(request):
         raise HTTPException(401, "Authentication required")
     ext = Path(file.filename or "").suffix.lower()
-    if ext not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(400, f"Unsupported type '{ext}'. Allowed: {', '.join(_ALLOWED_EXTENSIONS)}")
+
+    _all_allowed = _ALLOWED_EXTENSIONS | _ALLOWED_SURVEY_EXTENSIONS
+    if ext not in _all_allowed:
+        raise HTTPException(
+            400,
+            f"Unsupported type '{ext}'. Allowed: {', '.join(sorted(_all_allowed))}",
+        )
     contents = await file.read()
     if len(contents) > _MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "File too large (max 10 MB)")
+        raise HTTPException(413, "File too large (max 20 MB)")
 
-    doc_id = uuid.uuid4().hex
+    doc_id    = uuid.uuid4().hex
     save_path = os.path.join(UPLOADS_DIR, f"{doc_id}{ext}")
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
     with open(save_path, "wb") as fh:
         fh.write(contents)
 
+    # CSV / Excel → survey mode: skip RAG chunking, the survey_analyst reads
+    # the file directly with pandas.
+    if ext in _ALLOWED_SURVEY_EXTENSIONS:
+        try:
+            import pandas as pd
+            df = pd.read_csv(save_path) if ext == ".csv" else pd.read_excel(save_path)
+            shape = f"{df.shape[0]} rows × {df.shape[1]} columns"
+            columns = list(df.columns[:20])
+        except Exception as exc:
+            logger.warning(f"survey_preview_failed doc_id={doc_id}: {exc}")
+            shape, columns = "unknown", []
+        logger.info(f"survey_upload doc_id={doc_id} filename={file.filename!r} shape={shape!r}")
+        return {
+            "doc_id":    doc_id,
+            "filename":  file.filename,
+            "is_survey": True,
+            "shape":     shape,
+            "columns":   columns,
+        }
+
+    # Text/PDF/DOCX → standard RAG chunking.
     try:
         from app.rag.loader import load_and_chunk
         from app.rag.store import add_document
         chunks = load_and_chunk(save_path, file.filename)
-        n = add_document(doc_id, chunks, file.filename)
+        n      = add_document(doc_id, chunks, file.filename)
         logger.info(f"rag_upload doc_id={doc_id} filename={file.filename!r} chunks={n}")
     except Exception:
         logger.exception(f"rag_upload_failed doc_id={doc_id}")
         raise HTTPException(500, "Failed to process document. Check the file is not encrypted or empty.")
 
-    return {"doc_id": doc_id, "filename": file.filename, "chunks": n}
+    return {"doc_id": doc_id, "filename": file.filename, "chunks": n, "is_survey": False}
 
 
 @app.post("/upload/image")
@@ -407,12 +446,14 @@ async def chat(request: Request, req: ChatRequest) -> dict:
         raise HTTPException(401, "Authentication required")
     thread_id = req.thread_id or str(uuid.uuid4())
     inputs: dict = {
-        "messages": [HumanMessage(content=req.message)],
-        "attempts": 0,
-        # Always write doc_id so an explicit "" overwrites the checkpoint value,
-        # clearing RAG mode when the user removes the document badge.
-        "doc_id": req.doc_id or "",
-        "original_query": req.message,
+        "messages":          [HumanMessage(content=req.message)],
+        "attempts":          0,
+        "doc_id":            req.doc_id or "",
+        "is_survey":         req.is_survey,
+        "original_query":    req.message,
+        "revision_count":    0,
+        "revision_feedback": "",
+        "draft_score":       0,
     }
     return await _run_async(inputs, thread_id)
 
@@ -432,7 +473,8 @@ async def history() -> dict:
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
     "doc_agent", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
-    "report_writer", "pdf_generator", "chart_writer", "code_writer", "email_drafter",
+    "report_writer", "draft_critic", "academic_writer", "pdf_generator",
+    "chart_writer", "code_writer", "email_drafter",
     "fact_checker", "critic", "suggestions",
 }
 _STREAMING_NODES = {
@@ -448,6 +490,7 @@ async def chat_stream(
     message: str,
     thread_id: str | None = None,
     doc_id: str | None = None,
+    is_survey: bool = False,
 ) -> StreamingResponse:
     if not _check_auth(request):
         async def _deny():
@@ -478,12 +521,17 @@ async def chat_stream(
             return
 
         inputs: dict = {
-            "messages": [HumanMessage(content=message)],
-            "attempts": 0,
-            "doc_id": doc_id or "",
-            "original_query": message,
+            "messages":          [HumanMessage(content=message)],
+            "attempts":          0,
+            "doc_id":            doc_id or "",
+            "is_survey":         is_survey,
+            "original_query":    message,
+            "revision_count":    0,
+            "revision_feedback": "",
+            "draft_score":       0,
         }
         config = {"configurable": {"thread_id": _thread_id}}
+        set_thread_id(_thread_id)
 
         full_answer = ""
         sub_queries: list[str] = []
@@ -492,8 +540,9 @@ async def chat_stream(
         sources: list[dict] = []
         fact_check_results: list = []
         plan_steps: list[str] = []
-        chart_url = ""
-        pdf_url = ""
+        chart_url  = ""
+        chart_urls: list[str] = []
+        pdf_url    = ""
         detected_mode = "research"
         confidence_score: int = -1
         final_output: dict = {}
@@ -539,6 +588,25 @@ async def chat_stream(
                         fact_check_results = out.get("fact_check_results", [])
                         if fact_check_results:
                             yield sse({"type": "fact_check", "results": fact_check_results})
+                    elif name == "draft_critic" and node == "draft_critic":
+                        d_score    = out.get("draft_score", -1)
+                        d_feedback = out.get("revision_feedback", "")
+                        d_revision = out.get("revision_count", 0)
+                        if d_feedback:
+                            yield sse({"type": "revision", "round": d_revision,
+                                       "score": d_score, "feedback": d_feedback[:300]})
+                        else:
+                            yield sse({"type": "draft_accepted", "score": d_score})
+                    elif name == "data_visualizer" and node == "data_visualizer":
+                        chart_urls = out.get("chart_urls") or []
+                        chart_url  = chart_urls[0] if chart_urls else ""
+                        if chart_urls:
+                            yield sse({"type": "chart", "urls": chart_urls, "url": chart_url})
+                    elif name == "survey_analyst" and node == "survey_analyst":
+                        chart_urls = out.get("chart_urls") or []
+                        chart_url  = chart_urls[0] if chart_urls else ""
+                        if chart_urls:
+                            yield sse({"type": "chart", "urls": chart_urls, "url": chart_url})
                     elif name == "chart_writer" and node == "chart_writer":
                         chart_url = out.get("chart_url", "")
                         if chart_url:
@@ -570,9 +638,18 @@ async def chat_stream(
             snapshot = await _graph_mod.graph.aget_state(config)
             pending = [ipt for task in snapshot.tasks for ipt in (task.interrupts or [])]
             if pending:
-                question = pending[0].value.get("question", "Could you clarify your request?")
+                val = pending[0].value
                 logger.info(f"clarification_needed thread={_thread_id}")
-                yield sse({"type": "needs_clarification", "question": question, "thread_id": _thread_id})
+                if isinstance(val, dict) and val.get("type") == "academic_mcq":
+                    yield sse({
+                        "type": "needs_clarification",
+                        "question_type": "mcq",
+                        "questions": val["questions"],
+                        "thread_id": _thread_id,
+                    })
+                else:
+                    question = val.get("question", "Could you clarify your request?") if isinstance(val, dict) else str(val)
+                    yield sse({"type": "needs_clarification", "question_type": "text", "question": question, "thread_id": _thread_id})
                 return
         except Exception:
             logger.warning(f"get_state_failed thread={_thread_id}")
@@ -584,8 +661,10 @@ async def chat_stream(
             sub_queries = final_output.get("sub_queries", [])
         if not sources:
             sources = final_output.get("sources", [])
+        if not chart_urls:
+            chart_urls = final_output.get("chart_urls") or []
         if not chart_url:
-            chart_url = final_output.get("chart_url", "")
+            chart_url = chart_urls[0] if chart_urls else final_output.get("chart_url", "")
         if not pdf_url:
             pdf_url = final_output.get("pdf_url", "")
 
@@ -636,6 +715,7 @@ async def chat_stream(
             "fact_check_results": fact_check_results,
             "plan_steps":         plan_steps,
             "chart_url":          chart_url,
+            "chart_urls":         chart_urls,
             "pdf_url":            pdf_url,
             "confidence_score":   confidence_score,
             "telemetry": {
@@ -787,6 +867,97 @@ async def analytics(request: Request) -> dict:
 @app.get("/dashboard")
 def dashboard() -> FileResponse:
     return FileResponse("static/dashboard.html")
+
+
+# ── Node diagnostics ───────────────────────────────────────────────────────────
+
+
+@app.get("/diagnostics")
+async def diagnostics(
+    request: Request,
+    thread_id: str | None = None,
+    node: str | None = None,
+    status: str | None = None,
+    limit: int = 100,
+) -> dict:
+    """Return node checkpoint records for diagnosing pipeline failures.
+
+    Query params (all optional):
+      thread_id — filter to a specific conversation thread
+      node      — filter to a specific node name (e.g. "research")
+      status    — filter by status: started | completed | failed | interrupted
+      limit     — max rows to return (default 100, max 500)
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+
+    limit = min(limit, 500)
+    conditions = []
+    params: list = []
+    if thread_id:
+        conditions.append("thread_id = ?")
+        params.append(thread_id)
+    if node:
+        conditions.append("node = ?")
+        params.append(node)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.append(limit)
+
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        cur = await db.execute(
+            f"SELECT id, thread_id, node, status, input_summary, output_summary, "
+            f"error, duration_ms, timestamp "
+            f"FROM node_checkpoints {where} ORDER BY id DESC LIMIT ?",
+            params,
+        )
+        rows = await cur.fetchall()
+
+        # Aggregate: failure counts per node
+        cur2 = await db.execute(
+            "SELECT node, status, COUNT(*) FROM node_checkpoints GROUP BY node, status ORDER BY node"
+        )
+        agg_rows = await cur2.fetchall()
+
+    checkpoints = []
+    for r in rows:
+        entry: dict = {
+            "id":          r[0],
+            "thread_id":   r[1],
+            "node":        r[2],
+            "status":      r[3],
+            "duration_ms": r[7],
+            "timestamp":   r[8],
+        }
+        if r[4]:
+            try:
+                entry["input_summary"] = json.loads(r[4])
+            except Exception:
+                entry["input_summary"] = r[4]
+        if r[5]:
+            try:
+                entry["output_summary"] = json.loads(r[5])
+            except Exception:
+                entry["output_summary"] = r[5]
+        if r[6]:
+            entry["error"] = r[6]
+        checkpoints.append(entry)
+
+    # Build node health summary
+    node_health: dict = {}
+    for node_name, s, count in agg_rows:
+        if node_name not in node_health:
+            node_health[node_name] = {}
+        node_health[node_name][s] = count
+
+    return {
+        "count":       len(checkpoints),
+        "checkpoints": checkpoints,
+        "node_health": node_health,
+    }
 
 
 # ── PPTX export ────────────────────────────────────────────────────────────────

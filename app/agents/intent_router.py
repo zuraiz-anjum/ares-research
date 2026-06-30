@@ -17,6 +17,8 @@ code          Write, debug, or explain code — no web search needed.
 email         Research a topic, then draft a ready-to-send professional email.
 chart         Render user-supplied data as a matplotlib chart (no web search).
 pdf           Full research pipeline + export to a styled PDF document.
+academic      Research a topic and produce a Google-Scholar-style academic paper PDF
+              with Abstract, numbered sections, inline citations, and References.
 """
 
 import logging
@@ -33,6 +35,14 @@ from app.state import AgentState
 logger = logging.getLogger(__name__)
 
 _URL_RE = re.compile(r"https?://")
+
+_ACADEMIC_SIGNALS = {
+    "write a paper", "write me a paper", "research paper", "academic paper",
+    "write an academic", "write a research paper", "write a journal",
+    "journal article", "conference paper", "scholarly article",
+    "paper on", "paper about", "write paper", "academic report",
+    "literature review", "systematic review",
+}
 
 _REPORT_SIGNALS = {
     "write a report", "create a report", "make a report", "generate a report",
@@ -168,6 +178,16 @@ pdf           — research a topic AND export the result as a downloadable PDF
                 a pdf, always choose pdf — the pdf pipeline includes the full
                 research and report writing, then exports to PDF.
 
+academic      — research a topic and produce a Google-Scholar-style academic
+                paper PDF: Abstract, numbered sections (1. Introduction …
+                5. Conclusion), inline [N] citations, and a References list.
+                Choose this for ANY phrasing that means "academic / scholarly
+                paper": "write a paper", "research paper", "academic paper",
+                "journal article", "conference paper", "literature review",
+                "scholarly write-up", "in academic format", "something like
+                Google Scholar", "write it like a publication", "thesis on",
+                "survey paper", "academic-style report", etc.
+
 Reply with the mode name only — no explanation, no punctuation."""
 
 ROUTER_DOC_SUFFIX = """
@@ -183,16 +203,23 @@ CONTEXT: The user has an uploaded document active in this session.
 class RouteResult(BaseModel):
     mode: Literal[
         "research", "report", "data_analysis", "comparison", "debate",
-        "plan", "chat", "document", "code", "email", "chart", "pdf"
+        "plan", "chat", "document", "code", "email", "chart", "pdf",
+        "academic", "survey"
     ] = Field(description="Pipeline mode that best fits the user's request.")
 
 
 def intent_router_node(state: AgentState) -> dict:
-    question = state.get("original_query", "")
-    has_doc  = bool(state.get("doc_id"))
+    question   = state.get("original_query", "")
+    has_doc    = bool(state.get("doc_id"))
+    is_survey  = bool(state.get("is_survey"))
 
     if settings.mock_mode:
         return {"mode": "research"}
+
+    # Survey files bypass all other routing — the CSV/Excel flag is authoritative.
+    if is_survey:
+        logger.info("intent fast_path=survey is_survey=true")
+        return {"mode": "survey"}
 
     q_lower = question.lower()
 
@@ -215,6 +242,11 @@ def intent_router_node(state: AgentState) -> dict:
         return {"mode": result.mode}
 
     # ── No uploaded doc — fast paths ordered most-specific to least ──────
+
+    # Academic before PDF so "write a paper as a pdf" picks academic.
+    if any(sig in q_lower for sig in _ACADEMIC_SIGNALS):
+        logger.info("intent fast_path=academic")
+        return {"mode": "academic"}
 
     # Regex word-boundary check is the primary gate; phrase-list is backup.
     if _PDF_RE.search(question) or any(sig in q_lower for sig in _PDF_SIGNALS):

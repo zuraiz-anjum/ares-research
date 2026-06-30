@@ -250,6 +250,44 @@
       color: var(--error-text);
     }
 
+    /* ── Revision badge ─────────────────── */
+    .revision-badge {
+      font-size: 11.5px;
+      color: #c9a84c;
+      background: rgba(201,168,76,0.08);
+      border: 1px solid rgba(201,168,76,0.2);
+      border-radius: 6px;
+      padding: 5px 10px;
+      margin-top: 8px;
+      display: inline-block;
+    }
+    .revision-badge.accepted {
+      color: #5cb87a;
+      background: rgba(92,184,122,0.08);
+      border-color: rgba(92,184,122,0.2);
+    }
+
+    /* ── MCQ Widget ─────────────────────── */
+    .mcq-progress { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; letter-spacing: 0.4px; }
+    .mcq-label { font-size: 10.5px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
+    .mcq-text { font-size: 14px; color: var(--text); margin-bottom: 12px; line-height: 1.5; }
+    .mcq-options { display: flex; flex-direction: column; gap: 7px; }
+    .mcq-btn {
+      background: var(--surface3);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      padding: 9px 14px;
+      border-radius: 8px;
+      text-align: left;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      line-height: 1.4;
+    }
+    .mcq-btn:hover { border-color: var(--accent); background: var(--surface2); color: var(--accent); }
+    .mcq-done { font-size: 13px; color: var(--text-muted); padding: 4px 0; }
+
     /* markdown */
     .msg.bot p { margin: 0 0 10px; color: var(--text); }
     .msg.bot p:last-child { margin: 0; }
@@ -1307,6 +1345,7 @@
           <div class="chips">
             <button class="chip" onclick="fill(this)">Stripe vs Braintree vs Adyen — side by side comparison</button>
             <button class="chip" onclick="fill(this)">Write a PDF report on Anthropic's competitive position</button>
+            <button class="chip" onclick="fill(this)">Write a research paper on the impact of large language models</button>
             <button class="chip" onclick="fill(this)">Bar chart: Apple $383B, Google $307B, Meta $116B revenue</button>
             <button class="chip" onclick="fill(this)">Draft an email to my CTO about OpenAI's latest funding</button>
             <button class="chip" onclick="fill(this)">Debate: Is AI replacing software engineers?</button>
@@ -1319,7 +1358,7 @@
     <footer>
       <div class="input-row">
         <button class="attach-btn" id="attach-btn" title="Upload document or image">&#128206;</button>
-        <input type="file" id="file-input" accept=".pdf,.txt,.md,.docx,.png,.jpg,.jpeg,.webp,.gif" style="display:none" />
+        <input type="file" id="file-input" accept=".pdf,.txt,.md,.docx,.csv,.xlsx,.xls,.png,.jpg,.jpeg,.webp,.gif" style="display:none" />
         <button class="mic-btn" id="mic-btn" title="Voice input (hold to record)">&#127908;</button>
         <input id="input" placeholder="Research a company, chart data, generate a PDF report…" autocomplete="off" />
         <button class="send-btn" id="send">Send</button>
@@ -1358,9 +1397,12 @@
   const PIPELINE_CONFIGS = {
     research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
-    pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "chart_writer", "pdf_generator", "suggestions"],
-    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "chart_writer", "suggestions"],
-    comparison:    ["clarity", "intent_router", "decomposer", "research", "comparison_matrix", "chart_writer", "suggestions"],
+    pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "pdf_generator", "suggestions"],
+    academic:      ["clarity", "intent_router", "decomposer", "research", "academic_writer", "data_visualizer", "pdf_generator", "suggestions"],
+    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "data_visualizer", "suggestions"],
+    comparison:    ["clarity", "intent_router", "decomposer", "research", "comparison_matrix", "data_visualizer", "suggestions"],
+    report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "suggestions"],
+    survey:        ["clarity", "intent_router", "survey_analyst", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
     email:         ["clarity", "intent_router", "decomposer", "research", "email_drafter", "suggestions"],
     plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "fact_checker", "critic", "suggestions"],
@@ -1373,7 +1415,7 @@
   const NODE_LABELS = {
     clarity: "Clarity", intent_router: "Route", decomposer: "Decompose",
     research: "Research", synthesis: "Synthesis", critic: "Critique",
-    report_writer: "Report", doc_agent: "Document", validator: "Validate",
+    report_writer: "Report", draft_critic: "Draft Critic", doc_agent: "Document", validator: "Validate",
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
     chart_writer: "Chart", pdf_generator: "PDF",
@@ -1528,8 +1570,8 @@
     if (countEl) countEl.textContent = "20 agents";
 
     const modeList = [
-      "Research","Compare","Report","PDF","Data",
-      "Debate","Email","Plan","Code","Chart","Chat","Document",
+      "Research","Compare","Report","PDF","Academic",
+      "Data","Debate","Email","Plan","Code","Chart","Chat","Document","Survey",
     ];
     const agentRows = Object.entries(AGENT_META).map(([node, meta]) =>
       `<div class="idle-agent-row">
@@ -1540,7 +1582,7 @@
     ).join("");
 
     container.innerHTML = `
-      <div class="ap-section-label">12 Pipeline Modes</div>
+      <div class="ap-section-label">13 Pipeline Modes</div>
       <div class="mode-chips">
         ${modeList.map(m => `<span class="mode-chip">${m}</span>`).join("")}
       </div>
@@ -1590,9 +1632,10 @@
 
   // ── RAG document state ─────────────────────────────────────────────────
   // Multi-file support: activeDocIds is a list; threadDocId is comma-joined for the API.
-  let activeDocIds  = [];    // doc_ids from current uploads (shown in badge)
+  let activeDocIds   = [];   // doc_ids from current uploads (shown in badge)
   let activeDocNames = [];
-  let threadDocId   = null;  // committed to current thread silently (comma-joined)
+  let threadDocId    = null; // committed to current thread silently (comma-joined)
+  let activeSurvey   = false; // true when the last upload was a CSV/Excel
   // Legacy single-doc alias (used by older code paths)
   Object.defineProperty(window, "activeDocId", {
     get() { return activeDocIds[0] || null; },
@@ -1630,12 +1673,19 @@
       const data = await res.json();
       activeDocIds.push(data.doc_id);
       activeDocNames.push(data.filename);
-      const totalChunks = activeDocNames.length > 1
-        ? `${activeDocNames.length} files`
-        : `${data.chunks} chunks`;
-      docBadgeName.textContent = `📎 ${activeDocNames.join(", ")}  (${totalChunks})`;
+      activeSurvey = !!data.is_survey;
+      const label = data.is_survey
+        ? `📊 ${data.filename}  (${data.shape || "survey"})`
+        : activeDocNames.length > 1
+          ? `📎 ${activeDocNames.join(", ")}  (${activeDocNames.length} files)`
+          : `📎 ${data.filename}  (${data.chunks} chunks)`;
+      docBadgeName.textContent = label;
       docBadge.style.display = "flex";
       attachBtn.classList.add("has-doc");
+      if (data.is_survey && data.columns?.length) {
+        // Pre-fill the input with a helpful prompt so the user knows what they can ask.
+        inputEl.placeholder = `Analyse this survey — ${data.columns.slice(0,4).join(", ")}…`;
+      }
     } catch (e) {
       alert("Upload error: " + e.message);
     } finally {
@@ -1708,6 +1758,7 @@
       <div class="empty-chips">
         <button class="chip" onclick="fill(this)">Stripe vs Braintree vs Adyen — side by side comparison</button>
         <button class="chip" onclick="fill(this)">Write a PDF report on Anthropic's competitive position</button>
+        <button class="chip" onclick="fill(this)">Write a research paper on the impact of large language models</button>
         <button class="chip" onclick="fill(this)">Bar chart: Apple $383B, Google $307B, Meta $116B revenue</button>
         <button class="chip" onclick="fill(this)">Draft an email to my CTO about OpenAI's latest funding</button>
         <button class="chip" onclick="fill(this)">Debate: Is AI replacing software engineers?</button>
@@ -1769,10 +1820,11 @@
     clarity: "Clarity", intent_router: "Router", decomposer: "Decomposer",
     research: "Research", validator: "Validator", synthesis: "Synthesis",
     fact_checker: "Fact-check", critic: "Critic", suggestions: "Suggestions",
-    doc_agent: "DocAgent", report_writer: "Report", pdf_generator: "PDF",
-    chart_writer: "Chart", data_analyst: "Data", comparison_matrix: "Compare",
-    debate_writer: "Debate", email_drafter: "Email", code_writer: "Code",
-    planner: "Planner",
+    doc_agent: "DocAgent", report_writer: "Report", academic_writer: "Paper",
+    data_visualizer: "Visualize", survey_analyst: "Survey",
+    pdf_generator: "PDF", chart_writer: "Chart", data_analyst: "Data",
+    comparison_matrix: "Compare", debate_writer: "Debate", email_drafter: "Email",
+    code_writer: "Code", planner: "Planner", draft_critic: "Critic",
   };
 
   function buildPipelineDiagram(pipeline, activeNode) {
@@ -1893,24 +1945,18 @@
   function addMsg(text, type, subQueries) {
     hideEmpty();
     const g = document.createElement("div");
-    g.className = `msg-group ${type === "user" ? "user" : type === "clar" ? "clar" : "bot"}`;
+    g.className = `msg-group ${type === "user" ? "user" : "bot"}`;
 
-    if (type === "bot") {
+    if (type === "bot" || type === "clar") {
       const lbl = document.createElement("div");
       lbl.className = "msg-label";
-      lbl.textContent = _modeLabel(currentMode);
-      g.appendChild(lbl);
-    }
-    if (type === "clar") {
-      const lbl = document.createElement("div");
-      lbl.className = "msg-label";
-      lbl.textContent = "Clarification needed";
+      lbl.textContent = type === "clar" ? "Ares" : _modeLabel(currentMode);
       g.appendChild(lbl);
     }
 
     const msg = document.createElement("div");
-    msg.className = "msg " + type;
-    msg.innerHTML = (type === "bot") ? marked.parse(text) : escapeHtml(text);
+    msg.className = "msg bot";
+    msg.innerHTML = marked.parse(text);
     g.appendChild(msg);
 
     if (subQueries && subQueries.length > 1) appendSubQueries(g, subQueries);
@@ -1918,6 +1964,80 @@
     inner.appendChild(g);
     chatEl.scrollTop = chatEl.scrollHeight;
     return { group: g, bubble: msg };
+  }
+
+  function renderMcqWidget(questions) {
+    hideEmpty();
+    const container = document.createElement("div");
+    container.className = "msg-group bot";
+    const lbl = document.createElement("div");
+    lbl.className = "msg-label";
+    lbl.textContent = "Ares";
+    container.appendChild(lbl);
+    const widget = document.createElement("div");
+    widget.className = "msg bot";
+    widget.style.minWidth = "320px";
+    container.appendChild(widget);
+    inner.appendChild(container);
+    chatEl.scrollTop = chatEl.scrollHeight;
+
+    const answers = {};
+    let currentQ = 0;
+
+    function showQuestion(idx) {
+      const q = questions[idx];
+      const total = questions.length;
+      widget.innerHTML = `
+        <div class="mcq-progress">Question ${idx + 1} of ${total}</div>
+        <div class="mcq-label">${escapeHtml(q.label)}</div>
+        <div class="mcq-text">${escapeHtml(q.text)}</div>
+        <div class="mcq-options" id="mcq-opts"></div>
+      `;
+      const opts = widget.querySelector("#mcq-opts");
+      q.options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.className = "mcq-btn";
+        btn.textContent = opt;
+        btn.addEventListener("click", () => selectAnswer(idx, opt));
+        opts.appendChild(btn);
+      });
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    async function selectAnswer(idx, answer) {
+      const q = questions[idx];
+      answers[q.id] = answer;
+
+      // Show selected state briefly before moving on
+      widget.querySelectorAll(".mcq-btn").forEach(b => {
+        b.disabled = true;
+        if (b.textContent === answer) b.style.borderColor = "var(--accent)";
+      });
+
+      currentQ++;
+      if (currentQ < questions.length) {
+        await new Promise(r => setTimeout(r, 180));
+        showQuestion(currentQ);
+      } else {
+        widget.innerHTML = `<div class="mcq-done">✓ Got it — starting research…</div>`;
+        const combined = questions.map(q => `${q.label}: ${answers[q.id]}`).join("\n");
+        await submitClarification(combined);
+      }
+    }
+
+    showQuestion(0);
+  }
+
+  async function submitClarification(text) {
+    showTyping("Researching…");
+    showPipeline();
+    try {
+      const data = await post("/resume", { thread_id: threadId, clarification: text });
+      handleJsonResponse(data);
+    } catch {
+      hideTyping(); donePipeline();
+      addMsg("Something went wrong. Please try again.", "error");
+    }
   }
 
   function createBotGroup() {
@@ -2364,6 +2484,7 @@
     // follow-up turns in the same thread.  Empty string clears the checkpoint.
     const currentDocId = activeDocIds.join(",") || threadDocId || "";
     params.set("doc_id", currentDocId);
+    if (activeSurvey && activeDocIds.length > 0) params.set("is_survey", "true");
 
     const es = new EventSource(`/chat/stream?${params}`);
     activeEs = es;
@@ -2379,17 +2500,21 @@
           setAgentActive(data.node);
           updatePipelineDiagramActive(data.node);
           const labels = {
-            clarity:       "Checking your question...",
-            intent_router: "Routing to the right pipeline...",
-            planner:       "Creating a research plan...",
-            decomposer:    "Breaking down your question...",
-            research:      "Researching...",
-            validator:     "Validating findings...",
-            doc_agent:     "Fetching document...",
-            fact_checker:  "Fact-checking claims...",
-            data_analyst:  null,  // streaming node — creates bubble below
-            debate_writer: null,  // streaming node
-            suggestions:   null,  // fast, silent
+            clarity:         "Checking your question...",
+            intent_router:   "Routing to the right pipeline...",
+            planner:         "Creating a research plan...",
+            decomposer:      "Breaking down your question...",
+            research:        "Researching...",
+            validator:       "Validating findings...",
+            doc_agent:       "Fetching document...",
+            fact_checker:    "Fact-checking claims...",
+            data_visualizer: "Generating charts...",
+            survey_analyst:  "Analysing survey data...",
+            draft_critic:    "Critiquing draft...",
+            academic_writer: null,  // streaming node
+            data_analyst:    null,  // streaming node
+            debate_writer:   null,  // streaming node
+            suggestions:     null,  // fast, silent
           };
           if (STREAMING_NODES.has(data.node)) {
             // synthesis or report_writer — create the streaming bubble now.
@@ -2444,6 +2569,29 @@
           break;
         }
 
+        case "revision": {
+          // Draft scored below threshold — show a revision badge and keep streaming
+          if (botGroup) {
+            const badge = document.createElement("div");
+            badge.className = "revision-badge";
+            badge.innerHTML = `↺ Revision ${data.round} requested (score ${data.score}/10) — improving draft…`;
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
+          break;
+        }
+
+        case "draft_accepted": {
+          if (botGroup) {
+            const badge = document.createElement("div");
+            badge.className = "revision-badge accepted";
+            badge.innerHTML = `✓ Draft accepted — score ${data.score}/10`;
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
+          break;
+        }
+
         case "suggestions": {
           if (botGroup && data.questions?.length) appendSuggestions(botGroup, data.questions);
           break;
@@ -2469,10 +2617,12 @@
         }
 
         case "chart": {
-          pendingChartUrl = data.url || "";
-          if (botGroup && pendingChartUrl) {
-            appendChart(botGroup, pendingChartUrl);
-            pendingChartUrl = "";
+          // data_visualizer sends urls[] (multiple); chart_writer sends url (single).
+          const chartUrls = data.urls?.length ? data.urls : (data.url ? [data.url] : []);
+          if (botGroup && chartUrls.length) {
+            chartUrls.forEach(u => appendChart(botGroup, u));
+          } else {
+            pendingChartUrl = chartUrls[0] || "";
           }
           break;
         }
@@ -2494,12 +2644,14 @@
         case "complete": {
           threadId = data.thread_id;
           awaitingClarification = false;
+          inputEl.placeholder = "Research a company, chart data, generate a PDF report…";
           // Auto-dismiss the upload badge and commit the doc(s) to thread memory
           // so follow-up questions still have context without a visible badge.
           if (activeDocIds.length > 0) {
             threadDocId = activeDocIds.join(",");
-            activeDocIds = [];
+            activeDocIds  = [];
             activeDocNames = [];
+            activeSurvey  = false;
             docBadge.style.display = "none";
             attachBtn.classList.remove("has-doc");
           }
@@ -2523,10 +2675,12 @@
             if (data.fact_check_results?.length && !targetGroup.querySelector(".fact-check-section")) {
               appendFactCheck(targetGroup, data.fact_check_results);
             }
-            // Chart/PDF may arrive via their own events (already appended) or only in complete.
-            if (data.chart_url && !targetGroup.querySelector(".chart-section")) {
-              appendChart(targetGroup, data.chart_url);
-            }
+            // Charts: data_visualizer sends chart_urls[], chart_writer sends chart_url.
+            const allChartUrls = data.chart_urls?.length
+              ? data.chart_urls
+              : data.chart_url ? [data.chart_url] : [];
+            const existingCharts = targetGroup.querySelectorAll(".chart-section").length;
+            allChartUrls.slice(existingCharts).forEach(u => appendChart(targetGroup, u));
             if (data.pdf_url && !targetGroup.querySelector(".pdf-download")) {
               appendPdfDownload(targetGroup, data.pdf_url);
             }
@@ -2562,9 +2716,14 @@
 
         case "needs_clarification": {
           threadId = data.thread_id;
-          awaitingClarification = true;
           hideTyping(); donePipeline();
-          addMsg(data.question, "clar");
+          if (data.question_type === "mcq") {
+            renderMcqWidget(data.questions);
+          } else {
+            awaitingClarification = true;
+            addMsg(data.question || data.questions, "clar");
+            inputEl.placeholder = "Type your answer and press Send…";
+          }
           cleanup();
           break;
         }
@@ -2605,14 +2764,25 @@
     if (data.status === "needs_clarification") {
       awaitingClarification = true;
       addMsg(data.question, "clar");
+      inputEl.placeholder = "Type your answer and press Send…";
     } else if (data.status === "error") {
       awaitingClarification = false;
-      addMsg(data.answer, "error");
+      inputEl.placeholder = "Research a company, chart data, generate a PDF report…";
+      addMsg(data.answer || "An error occurred.", "error");
     } else {
       awaitingClarification = false;
-      const { group } = addMsg(data.answer, "bot", data.sub_queries);
-      if (data.source_url) appendSourceUrl(group, data.source_url);
-      if (data.critique) appendCritique(group, data.critique);
+      inputEl.placeholder = "Research a company, chart data, generate a PDF report…";
+      const { group } = addMsg(data.answer || "(no answer)", "bot", data.sub_queries);
+      if (data.plan_steps?.length)        appendPlan(group, data.plan_steps);
+      if (data.source_url)                appendSourceUrl(group, data.source_url);
+      if (data.fact_check_results?.length) appendFactCheck(group, data.fact_check_results);
+      if (data.critique)                  appendCritique(group, data.critique);
+      (data.chart_urls?.length ? data.chart_urls : data.chart_url ? [data.chart_url] : [])
+        .forEach(u => appendChart(group, u));
+      if (data.pdf_url)                   appendPdfDownload(group, data.pdf_url);
+      if (data.sources?.length)           appendSources(group, data.sources);
+      if (data.suggestions?.length)       appendSuggestions(group, data.suggestions);
+      appendActions(group, data.answer, data.pdf_url, data.chart_url, data.confidence_score ?? -1);
     }
   }
 

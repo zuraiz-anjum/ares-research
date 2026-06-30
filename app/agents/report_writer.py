@@ -50,9 +50,11 @@ Rules:
 
 
 async def report_writer_node(state: AgentState) -> dict:
-    question = state.get("original_query", "")
-    findings = state.get("findings", "") or state.get("raw_research", "")
-    sub_queries = state.get("sub_queries", [])
+    question          = state.get("original_query", "")
+    findings          = state.get("findings", "") or state.get("raw_research", "")
+    sub_queries       = state.get("sub_queries", [])
+    revision_feedback = state.get("revision_feedback", "") or ""
+    revision_count    = state.get("revision_count", 0)
 
     if settings.mock_mode:
         mock = (
@@ -79,13 +81,21 @@ async def report_writer_node(state: AgentState) -> dict:
         context += f"Sub-topics researched in parallel: {', '.join(sub_queries)}\n"
     context += f"\nFindings:\n{findings}"
 
+    if revision_feedback:
+        context += (
+            f"\n\n--- Quality critic feedback (revision {revision_count}) ---\n"
+            f"{revision_feedback}\n"
+            f"--- Incorporate ALL of the above feedback points in this revision ---"
+        )
+
     llm = get_llm(streaming=True)
     response = await llm.ainvoke([
         SystemMessage(content=REPORT_SYSTEM_PROMPT),
         HumanMessage(content=context),
     ])
-    logger.info("report_writer_complete")
+    logger.info(f"report_writer_complete revision={revision_count} has_feedback={bool(revision_feedback)}")
     return {
-        "messages": [AIMessage(content=response.content)],
-        "report_content": response.content,
+        "messages":          [AIMessage(content=response.content)],
+        "report_content":    response.content,
+        "revision_feedback": "",   # clear after consuming
     }

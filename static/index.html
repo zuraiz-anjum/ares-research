@@ -250,6 +250,33 @@
       color: var(--error-text);
     }
 
+    /* ── Debate badge ───────────────────── */
+    .debate-badge {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(99,102,241,0.07);
+      border: 1px solid rgba(99,102,241,0.22);
+      border-radius: 8px;
+      font-size: 11.5px;
+    }
+    .debate-label {
+      color: #a5b4fc;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+    .debate-queries {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .debate-query {
+      background: rgba(99,102,241,0.12);
+      color: #c7d2fe;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 11px;
+    }
+
     /* ── Revision badge ─────────────────── */
     .revision-badge {
       font-size: 11.5px;
@@ -1395,7 +1422,7 @@
 
   // Pipeline configs per mode — defines which nodes appear and in what order.
   const PIPELINE_CONFIGS = {
-    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "fact_checker", "critic", "suggestions"],
+    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "challenger", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
     pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "pdf_generator", "suggestions"],
     academic:      ["clarity", "intent_router", "decomposer", "research", "academic_writer", "data_visualizer", "pdf_generator", "suggestions"],
@@ -1405,7 +1432,7 @@
     survey:        ["clarity", "intent_router", "survey_analyst", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
     email:         ["clarity", "intent_router", "decomposer", "research", "email_drafter", "suggestions"],
-    plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "fact_checker", "critic", "suggestions"],
+    plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "challenger", "fact_checker", "critic", "suggestions"],
     chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
     document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
     code:          ["clarity", "intent_router", "code_writer", "suggestions"],
@@ -1824,7 +1851,7 @@
     data_visualizer: "Visualize", survey_analyst: "Survey",
     pdf_generator: "PDF", chart_writer: "Chart", data_analyst: "Data",
     comparison_matrix: "Compare", debate_writer: "Debate", email_drafter: "Email",
-    code_writer: "Code", planner: "Planner", draft_critic: "Critic",
+    code_writer: "Code", planner: "Planner", draft_critic: "Critic", challenger: "Debate",
   };
 
   function buildPipelineDiagram(pipeline, activeNode) {
@@ -2511,6 +2538,7 @@
             data_visualizer: "Generating charts...",
             survey_analyst:  "Analysing survey data...",
             draft_critic:    "Critiquing draft...",
+            challenger:      "Stress-testing the answer...",
             academic_writer: null,  // streaming node
             data_analyst:    null,  // streaming node
             debate_writer:   null,  // streaming node
@@ -2566,6 +2594,23 @@
         case "critique": {
           botGroup?.querySelector(".critique-spinner")?.remove();
           if (botGroup && data.content) appendCritique(botGroup, data.content);
+          break;
+        }
+
+        case "debate": {
+          if (botGroup && data.challenge_queries?.length) {
+            const badge = document.createElement("div");
+            badge.className = "debate-badge";
+            const label = data.found_counter
+              ? `⚔ Counter-evidence found — reconciling perspectives…`
+              : `⚔ Stress-tested (no strong counter-evidence found)`;
+            const queries = data.challenge_queries
+              .map(q => `<span class="debate-query">${q}</span>`)
+              .join("");
+            badge.innerHTML = `<div class="debate-label">${label}</div><div class="debate-queries">${queries}</div>`;
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
           break;
         }
 

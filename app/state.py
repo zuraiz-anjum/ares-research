@@ -82,6 +82,11 @@ class AgentState(TypedDict, total=False):
     paper_abstract: str   # 150-200 word abstract block
     paper_keywords: str   # comma-separated keyword list
 
+    # Challenger (Research ↔ Synthesis debate) output.
+    challenge_queries: list  # list[str] — Tavily queries used to find counter-evidence
+    counter_evidence:  str   # raw counter-evidence text found by challenger
+    synthesis_draft:   str   # first-pass synthesis answer (before reconciliation)
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

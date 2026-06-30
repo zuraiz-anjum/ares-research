@@ -12,7 +12,7 @@ Pipelines by mode (set by intent_router after clarity):
   comparison    → decomposer → research → validator* → comparison_matrix → data_visualizer → suggestions → END
   debate        → decomposer → research → validator* → debate_writer → suggestions → END
   email         → decomposer → research → validator* → email_drafter → suggestions → END
-  plan          → planner → research → validator* → synthesis → challenger → fact_checker → critic → suggestions → END
+  plan          → planner → research → validator* → dynamic_spawner (parallel specialists) → challenger → fact_checker → critic → suggestions → END
   chat          → synthesis → suggestions → END
   document      → doc_agent → synthesis → suggestions → END
   code          → code_writer → suggestions → END
@@ -50,6 +50,7 @@ from app.agents.research import research_node
 from app.agents.suggestions import suggestions_node
 from app.agents.survey_analyst import survey_analyst_node
 from app.agents.challenger import challenger_node
+from app.agents.dynamic_spawner import dynamic_spawner_node
 from app.agents.synthesis import synthesis_node
 from app.agents.voting_synthesis import voting_synthesis_node
 from app.agents.validator import validator_node
@@ -75,7 +76,9 @@ def _after_research_pipeline(state: AgentState) -> str:
         return "email_drafter"
     if mode == "research":
         return "voting_synthesis"   # parallel multi-perspective reasoning
-    return "synthesis"  # plan, document fallback
+    if mode == "plan":
+        return "dynamic_spawner"    # findings-aware agent selection
+    return "synthesis"  # document fallback
 
 
 def route_after_data_visualizer(state: AgentState) -> str:
@@ -149,11 +152,17 @@ def route_after_voting_synthesis(_state: AgentState) -> str:
     return "challenger"
 
 
+def route_after_dynamic_spawner(_state: AgentState) -> str:
+    # dynamic_spawner is plan mode only — always debates then fact-checks.
+    return "challenger"
+
+
 _RESEARCH_PIPELINE_TARGETS = {
     "research":          "research",
     "validator":         "validator",
     "synthesis":         "synthesis",
     "voting_synthesis":  "voting_synthesis",
+    "dynamic_spawner":   "dynamic_spawner",
     "report_writer":     "report_writer",
     "academic_writer":   "academic_writer",
     "data_analyst":      "data_analyst",
@@ -183,6 +192,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_node("fact_checker",      cp(fact_checker_node))
     builder.add_node("synthesis",         cp(synthesis_node))
     builder.add_node("voting_synthesis",  cp(voting_synthesis_node))
+    builder.add_node("dynamic_spawner",   cp(dynamic_spawner_node))
     builder.add_node("challenger",        cp(challenger_node))
     builder.add_node("report_writer",     cp(report_writer_node))
     builder.add_node("academic_writer",   cp(academic_writer_node))
@@ -229,6 +239,10 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     )
     builder.add_conditional_edges(
         "voting_synthesis", route_after_voting_synthesis,
+        {"challenger": "challenger"},
+    )
+    builder.add_conditional_edges(
+        "dynamic_spawner", route_after_dynamic_spawner,
         {"challenger": "challenger"},
     )
     builder.add_edge("challenger",        "fact_checker")

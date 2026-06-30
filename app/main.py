@@ -473,7 +473,7 @@ async def history() -> dict:
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
     "doc_agent", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
-    "challenger", "voting_synthesis", "report_writer", "draft_critic", "academic_writer", "pdf_generator",
+    "challenger", "voting_synthesis", "dynamic_spawner", "report_writer", "draft_critic", "academic_writer", "pdf_generator",
     "chart_writer", "code_writer", "email_drafter",
     "fact_checker", "critic", "suggestions",
 }
@@ -603,6 +603,12 @@ async def chat_stream(
                         if winner:
                             yield sse({"type": "vote_result",
                                        "winner": winner, "reason": reason})
+                    elif name == "dynamic_spawner" and node == "dynamic_spawner":
+                        agents    = out.get("spawned_agents") or []
+                        rationale = out.get("spawn_rationale", "")
+                        if agents:
+                            yield sse({"type": "agents_spawned",
+                                       "agents": agents, "rationale": rationale})
                     elif name == "challenger" and node == "challenger":
                         queries = out.get("challenge_queries") or []
                         counter = out.get("counter_evidence", "")

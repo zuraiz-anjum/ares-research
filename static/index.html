@@ -250,6 +250,31 @@
       color: var(--error-text);
     }
 
+    /* ── Spawn badge ────────────────────── */
+    .spawn-badge {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: rgba(139,92,246,0.07);
+      border: 1px solid rgba(139,92,246,0.22);
+      border-radius: 8px;
+      font-size: 11.5px;
+    }
+    .spawn-icon  { margin-right: 4px; }
+    .spawn-label { color: #c4b5fd; font-weight: 600; }
+    .spawn-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+    .spawn-pill  {
+      background: rgba(139,92,246,0.15);
+      color: #ddd6fe;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+    }
+    .spawn-rationale {
+      color: #9ca3af;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+
     /* ── Vote badge ─────────────────────── */
     .vote-badge {
       margin-top: 8px;
@@ -1449,7 +1474,7 @@
     survey:        ["clarity", "intent_router", "survey_analyst", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
     email:         ["clarity", "intent_router", "decomposer", "research", "email_drafter", "suggestions"],
-    plan:          ["clarity", "intent_router", "planner", "research", "synthesis", "challenger", "fact_checker", "critic", "suggestions"],
+    plan:          ["clarity", "intent_router", "planner", "research", "dynamic_spawner", "challenger", "fact_checker", "critic", "suggestions"],
     chat:          ["clarity", "intent_router", "synthesis", "suggestions"],
     document:      ["clarity", "intent_router", "doc_agent", "synthesis", "suggestions"],
     code:          ["clarity", "intent_router", "code_writer", "suggestions"],
@@ -1458,7 +1483,7 @@
 
   const NODE_LABELS = {
     clarity: "Clarity", intent_router: "Route", decomposer: "Decompose",
-    research: "Research", synthesis: "Synthesis", voting_synthesis: "Vote", critic: "Critique",
+    research: "Research", synthesis: "Synthesis", voting_synthesis: "Vote", dynamic_spawner: "Spawn", critic: "Critique",
     report_writer: "Report", draft_critic: "Draft Critic", doc_agent: "Document", validator: "Validate",
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
@@ -1869,7 +1894,7 @@
     pdf_generator: "PDF", chart_writer: "Chart", data_analyst: "Data",
     comparison_matrix: "Compare", debate_writer: "Debate", email_drafter: "Email",
     code_writer: "Code", planner: "Planner", draft_critic: "Critic",
-    challenger: "Debate", voting_synthesis: "Vote",
+    challenger: "Debate", voting_synthesis: "Vote", dynamic_spawner: "Spawn",
   };
 
   function buildPipelineDiagram(pipeline, activeNode) {
@@ -2556,7 +2581,8 @@
             data_visualizer: "Generating charts...",
             survey_analyst:  "Analysing survey data...",
             draft_critic:    "Critiquing draft...",
-            voting_synthesis: "Running 3 perspectives in parallel...",
+            voting_synthesis:  "Running 3 perspectives in parallel...",
+            dynamic_spawner:  "Selecting specialist agents...",
             challenger:      "Stress-testing the answer...",
             academic_writer: null,  // streaming node
             data_analyst:    null,  // streaming node
@@ -2613,6 +2639,25 @@
         case "critique": {
           botGroup?.querySelector(".critique-spinner")?.remove();
           if (botGroup && data.content) appendCritique(botGroup, data.content);
+          break;
+        }
+
+        case "agents_spawned": {
+          if (botGroup && data.agents?.length) {
+            const labelMap = { narrative: "Narrative", quantitative: "Quantitative", comparative: "Comparative" };
+            const badge = document.createElement("div");
+            badge.className = "spawn-badge";
+            const pills = data.agents
+              .map(a => `<span class="spawn-pill">${labelMap[a] || a}</span>`)
+              .join("");
+            badge.innerHTML =
+              `<span class="spawn-icon">⚡</span>` +
+              `<span class="spawn-label">Spawned ${data.agents.length} agent${data.agents.length > 1 ? "s" : ""}</span>` +
+              `<div class="spawn-pills">${pills}</div>` +
+              (data.rationale ? `<div class="spawn-rationale">${data.rationale}</div>` : "");
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
           break;
         }
 

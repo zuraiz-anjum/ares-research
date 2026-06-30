@@ -92,6 +92,10 @@ class AgentState(TypedDict, total=False):
     vote_reason:    str   # one-sentence judge explanation
     vote_responses: dict  # {"analyst": str, "devils_advocate": str, "communicator": str}
 
+    # Dynamic spawner output (plan mode only).
+    spawned_agents:  list  # list[str] — agents that were activated
+    spawn_rationale: str   # one-sentence explanation of the spawn decision
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

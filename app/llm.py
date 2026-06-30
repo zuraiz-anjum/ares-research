@@ -31,6 +31,24 @@ def _is_rate_limited(exc: Exception) -> bool:
     ])
 
 
+def _is_provider_bug(exc: Exception) -> bool:
+    """Detect provider-specific bugs that warrant falling back to the next provider.
+
+    Groq's llama models fail structured output in two ways:
+      1. tool_use_failed — model emits <function=...> Hermes format instead of
+         proper JSON tool calls, rejected by Groq's own API.
+      2. json_object prompt constraint — json_mode requires the word 'json' in
+         the prompt, which not every agent system prompt includes.
+    Both are Groq deficiencies; fall through to Cerebras/Gemini instead.
+    """
+    msg = str(exc)
+    return any(kw in msg for kw in [
+        "tool_use_failed",
+        "failed_generation",
+        "must contain the word 'json'",
+    ])
+
+
 def _build_llms(temperature: float, streaming: bool) -> list[tuple[str, object]]:
     """Build the ordered list of available LLM instances."""
     providers: list[tuple[str, object]] = []
@@ -119,7 +137,7 @@ class _FallbackLLM:
             try:
                 return self._llm().invoke(*args, **kwargs)
             except Exception as exc:
-                if _is_rate_limited(exc) and self._advance(exc):
+                if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
                     continue
                 raise
 
@@ -128,7 +146,7 @@ class _FallbackLLM:
             try:
                 return await self._llm().ainvoke(*args, **kwargs)
             except Exception as exc:
-                if _is_rate_limited(exc) and self._advance(exc):
+                if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
                     continue
                 raise
 

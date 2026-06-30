@@ -317,13 +317,14 @@ class TestConfidenceScore:
         assert 0 < settings.confidence_threshold <= 10
 
     @pytest.mark.parametrize("score,expected_route", [
-        (10, "synthesis"),
-        (settings.confidence_threshold, "synthesis"),
+        # research mode now uses voting_synthesis instead of synthesis
+        (10, "voting_synthesis"),
+        (settings.confidence_threshold, "voting_synthesis"),
         (settings.confidence_threshold - 1, "validator"),
         (0, "validator"),
     ])
     def test_confidence_boundaries(self, score, expected_route):
-        result = route_after_research({"confidence_score": score})
+        result = route_after_research({"confidence_score": score, "mode": "research"})
         assert result == expected_route
 
     def test_research_node_sets_confidence_score(self):

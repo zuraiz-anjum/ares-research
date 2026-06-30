@@ -19,33 +19,37 @@ from app.graph import route_after_research, route_after_validation
 # ---------------------------------------------------------------------------
 
 ROUTING_CASES = [
-    (9,  "synthesis", "high confidence skips validator"),
-    (7,  "synthesis", "above threshold skips validator"),
-    (6,  "synthesis", "exactly at threshold → synthesis"),
-    (5,  "validator", "below threshold needs validation"),
-    (1,  "validator", "very low confidence needs validation"),
-    (0,  "validator", "zero confidence needs validation"),
+    # research mode now routes to voting_synthesis (parallel voting)
+    (9,  "voting_synthesis", "high confidence skips validator → voting_synthesis"),
+    (7,  "voting_synthesis", "above threshold skips validator → voting_synthesis"),
+    (6,  "voting_synthesis", "exactly at threshold → voting_synthesis"),
+    (5,  "validator",        "below threshold needs validation"),
+    (1,  "validator",        "very low confidence needs validation"),
+    (0,  "validator",        "zero confidence needs validation"),
 ]
 
 
 def test_labeled_routing_cases():
     for score, expected, label in ROUTING_CASES:
-        result = route_after_research({"confidence_score": score})
+        result = route_after_research({"confidence_score": score, "mode": "research"})
         assert result == expected, f"FAILED: {label} — got {result!r}, expected {expected!r}"
 
 
 VALIDATION_CASES = [
-    ("sufficient",   1, "synthesis", "sufficient always exits loop"),
-    ("sufficient",   3, "synthesis", "sufficient exits even at max attempts"),
-    ("insufficient", 1, "research",  "insufficient below max retries"),
-    ("insufficient", 2, "research",  "insufficient one below max retries"),
-    ("insufficient", 3, "synthesis", "insufficient at max exits loop"),
+    # research mode exits validation → voting_synthesis
+    ("sufficient",   1, "voting_synthesis", "sufficient always exits loop → voting_synthesis"),
+    ("sufficient",   3, "voting_synthesis", "sufficient exits even at max attempts → voting_synthesis"),
+    ("insufficient", 1, "research",         "insufficient below max retries"),
+    ("insufficient", 2, "research",         "insufficient one below max retries"),
+    ("insufficient", 3, "voting_synthesis", "insufficient at max exits loop → voting_synthesis"),
 ]
 
 
 def test_labeled_validation_cases():
     for result, attempts, expected, label in VALIDATION_CASES:
-        actual = route_after_validation({"validation_result": result, "attempts": attempts})
+        actual = route_after_validation({
+            "validation_result": result, "attempts": attempts, "mode": "research"
+        })
         assert actual == expected, f"FAILED: {label} — got {actual!r}, expected {expected!r}"
 
 

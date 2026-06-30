@@ -109,6 +109,7 @@ def _mock_response(query: str) -> dict:
 
 async def _run_variant(system_prompt: str, context: str, label: str) -> str:
     """Run a single synthesis variant. Returns the text content."""
+    from app.utils.checkpoint import save_sub_agent_error
     llm = get_llm(streaming=False)
     try:
         response = await llm.ainvoke([
@@ -118,7 +119,7 @@ async def _run_variant(system_prompt: str, context: str, label: str) -> str:
         logger.info(f"voting_synthesis: {label} completed len={len(response.content)}")
         return response.content
     except Exception as exc:
-        logger.warning(f"voting_synthesis: {label} failed: {exc}")
+        await save_sub_agent_error("voting_synthesis", label, exc)
         return ""
 
 

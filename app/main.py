@@ -933,7 +933,7 @@ async def diagnostics(
     async with aiosqlite.connect(ANALYTICS_DB) as db:
         cur = await db.execute(
             f"SELECT id, thread_id, node, status, input_summary, output_summary, "
-            f"error, duration_ms, timestamp "
+            f"error, duration_ms, timestamp, error_type "
             f"FROM node_checkpoints {where} ORDER BY id DESC LIMIT ?",
             params,
         )
@@ -967,6 +967,8 @@ async def diagnostics(
                 entry["output_summary"] = r[5]
         if r[6]:
             entry["error"] = r[6]
+        if r[9]:
+            entry["error_type"] = r[9]
         checkpoints.append(entry)
 
     # Build node health summary
@@ -980,6 +982,90 @@ async def diagnostics(
         "count":       len(checkpoints),
         "checkpoints": checkpoints,
         "node_health": node_health,
+    }
+
+
+@app.get("/errors")
+async def errors_endpoint(
+    request: Request,
+    node: str | None = None,
+    error_type: str | None = None,
+    hours: int = 24,
+    limit: int = 50,
+) -> dict:
+    """Return recent failed checkpoints for rapid error diagnosis.
+
+    Query params (all optional):
+      node       — filter to a specific node (e.g. "research", "voting_synthesis")
+      error_type — filter by exception class (e.g. "TimeoutError", "ValueError")
+      hours      — look back N hours (default 24, max 168)
+      limit      — max rows (default 50, max 200)
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+
+    hours = min(hours, 168)
+    limit = min(limit, 200)
+    since = datetime.utcnow().replace(microsecond=0).isoformat()
+
+    conditions = ["status = 'failed'", f"timestamp >= datetime('now', '-{hours} hours')"]
+    params: list = []
+    if node:
+        conditions.append("node = ?")
+        params.append(node)
+    if error_type:
+        conditions.append("error_type = ?")
+        params.append(error_type)
+
+    where = "WHERE " + " AND ".join(conditions)
+    params.append(limit)
+
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        cur = await db.execute(
+            f"SELECT id, thread_id, node, error_type, error, input_summary, duration_ms, timestamp "
+            f"FROM node_checkpoints {where} ORDER BY id DESC LIMIT ?",
+            params,
+        )
+        rows = await cur.fetchall()
+
+        # Error frequency summary: node × error_type counts in the window
+        cur2 = await db.execute(
+            f"SELECT node, error_type, COUNT(*) as n "
+            f"FROM node_checkpoints "
+            f"WHERE status='failed' AND timestamp >= datetime('now', '-{hours} hours') "
+            f"GROUP BY node, error_type ORDER BY n DESC"
+        )
+        freq_rows = await cur2.fetchall()
+
+    errors = []
+    for r in rows:
+        entry: dict = {
+            "id":          r[0],
+            "thread_id":   r[1],
+            "node":        r[2],
+            "error_type":  r[3] or "unknown",
+            "duration_ms": r[6],
+            "timestamp":   r[7],
+        }
+        if r[4]:
+            entry["traceback"] = r[4]
+        if r[5]:
+            try:
+                entry["input_summary"] = json.loads(r[5])
+            except Exception:
+                entry["input_summary"] = r[5]
+        errors.append(entry)
+
+    frequency = [
+        {"node": r[0], "error_type": r[1] or "unknown", "count": r[2]}
+        for r in freq_rows
+    ]
+
+    return {
+        "window_hours": hours,
+        "total_errors": len(errors),
+        "frequency":    frequency,
+        "errors":       errors,
     }
 
 

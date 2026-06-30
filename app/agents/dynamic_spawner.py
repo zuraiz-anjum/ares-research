@@ -148,6 +148,7 @@ def _extract_entity_names(findings: str, n: int = 4) -> list[str]:
 
 
 async def _call_agent(system: str, user_msg: str, label: str) -> str:
+    from app.utils.checkpoint import save_sub_agent_error
     llm = get_llm(streaming=False)
     try:
         resp = await llm.ainvoke([
@@ -157,7 +158,7 @@ async def _call_agent(system: str, user_msg: str, label: str) -> str:
         logger.info(f"dynamic_spawner: {label} completed len={len(resp.content)}")
         return resp.content
     except Exception as exc:
-        logger.warning(f"dynamic_spawner: {label} failed — {exc}")
+        await save_sub_agent_error("dynamic_spawner", label, exc)
         return ""
 
 
@@ -246,16 +247,8 @@ async def dynamic_spawner_node(state: AgentState) -> dict:
 
     # ── Step 4: weave outputs together (streaming) ────────────────────────────
     if len(outputs) == 1:
-        # Only narrative ran — no weaving needed, stream directly
-        weaver_llm = get_llm(streaming=True)
-        weaved = await weaver_llm.ainvoke([
-            SystemMessage(content=WEAVER_PROMPT),
-            HumanMessage(content="\n\n".join(
-                f"=== {k.upper()} AGENT OUTPUT ===\n{v}"
-                for k, v in outputs.items()
-            )),
-        ])
-        final = weaved.content
+        # Single agent — return directly, no weaving needed.
+        final = next(iter(outputs.values())).rstrip()
     else:
         weaver_context = (
             f"User question: {query}\n\n"

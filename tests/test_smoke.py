@@ -21,15 +21,17 @@ def test_graph_compiles():
 
 
 def test_graph_has_expected_nodes():
-    """All 19 agent nodes should be registered in the compiled graph."""
+    """All 26 agent nodes should be registered in the compiled graph."""
     graph = build_graph()
     nodes = set(graph.get_graph().nodes.keys())
     expected = {
         "clarity", "intent_router", "decomposer", "research", "validator",
-        "synthesis", "doc_agent", "fact_checker", "critic", "suggestions",
-        "report_writer", "pdf_generator", "chart_writer", "data_analyst",
-        "comparison_matrix", "debate_writer", "email_drafter", "code_writer",
-        "planner",
+        "synthesis", "voting_synthesis", "challenger", "dynamic_spawner",
+        "doc_agent", "fact_checker", "critic", "suggestions",
+        "report_writer", "draft_critic", "academic_writer",
+        "pdf_generator", "chart_writer", "data_analyst", "data_visualizer",
+        "survey_analyst", "comparison_matrix", "debate_writer",
+        "email_drafter", "code_writer", "planner",
     }
     missing = expected - nodes
     assert not missing, f"Missing nodes: {missing}"
@@ -39,35 +41,36 @@ def test_graph_has_expected_nodes():
 # route_after_research — confidence-based routing
 # ---------------------------------------------------------------------------
 
-def test_high_confidence_routes_to_synthesis():
-    state = {"confidence_score": 8}
-    assert route_after_research(state) == "synthesis"
+def test_high_confidence_routes_to_voting_synthesis():
+    # Default mode is "research", which now uses voting_synthesis.
+    state = {"confidence_score": 8, "mode": "research"}
+    assert route_after_research(state) == "voting_synthesis"
 
 
 def test_low_confidence_routes_to_validator():
-    state = {"confidence_score": 2}
+    state = {"confidence_score": 2, "mode": "research"}
     assert route_after_research(state) == "validator"
 
 
-def test_confidence_at_threshold_routes_to_synthesis():
-    """Score exactly at threshold should go to synthesis (>= boundary)."""
-    state = {"confidence_score": settings.confidence_threshold}
-    assert route_after_research(state) == "synthesis"
+def test_confidence_at_threshold_routes_to_voting_synthesis():
+    """Score exactly at threshold should bypass validator."""
+    state = {"confidence_score": settings.confidence_threshold, "mode": "research"}
+    assert route_after_research(state) == "voting_synthesis"
 
 
 def test_confidence_one_below_threshold_routes_to_validator():
-    state = {"confidence_score": settings.confidence_threshold - 1}
+    state = {"confidence_score": settings.confidence_threshold - 1, "mode": "research"}
     assert route_after_research(state) == "validator"
 
 
 def test_zero_confidence_routes_to_validator():
-    state = {"confidence_score": 0}
+    state = {"confidence_score": 0, "mode": "research"}
     assert route_after_research(state) == "validator"
 
 
-def test_max_confidence_routes_to_synthesis():
-    state = {"confidence_score": 10}
-    assert route_after_research(state) == "synthesis"
+def test_max_confidence_routes_to_voting_synthesis():
+    state = {"confidence_score": 10, "mode": "research"}
+    assert route_after_research(state) == "voting_synthesis"
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +78,8 @@ def test_max_confidence_routes_to_synthesis():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("mode,expected", [
-    ("research",      "synthesis"),
-    ("plan",          "synthesis"),
+    ("research",      "voting_synthesis"),   # parallel voting
+    ("plan",          "dynamic_spawner"),    # findings-aware spawn
     ("report",        "report_writer"),
     ("pdf",           "report_writer"),
     ("data_analysis", "data_analyst"),
@@ -94,30 +97,39 @@ def test_mode_routing_after_research(mode, expected):
 # route_after_validation — loop and exit conditions
 # ---------------------------------------------------------------------------
 
-def test_sufficient_validation_routes_to_synthesis():
-    state = {"validation_result": "sufficient", "attempts": 1}
-    assert route_after_validation(state) == "synthesis"
+def test_sufficient_validation_routes_to_output_node():
+    # Validation sufficient for report mode → report_writer
+    state = {"validation_result": "sufficient", "attempts": 1, "mode": "report"}
+    assert route_after_validation(state) == "report_writer"
+
+
+def test_sufficient_validation_research_routes_to_voting_synthesis():
+    state = {"validation_result": "sufficient", "attempts": 1, "mode": "research"}
+    assert route_after_validation(state) == "voting_synthesis"
 
 
 def test_insufficient_validation_loops_back_to_research():
-    state = {"validation_result": "insufficient", "attempts": 1}
+    state = {"validation_result": "insufficient", "attempts": 1, "mode": "research"}
     assert route_after_validation(state) == "research"
 
 
-def test_max_attempts_reached_routes_to_synthesis():
-    """When attempts hit the max, stop looping and proceed."""
-    state = {"validation_result": "insufficient", "attempts": settings.max_validation_attempts}
-    assert route_after_validation(state) == "synthesis"
+def test_max_attempts_reached_exits_loop():
+    """When attempts hit the max, stop looping and proceed to output."""
+    state = {"validation_result": "insufficient",
+             "attempts": settings.max_validation_attempts, "mode": "report"}
+    assert route_after_validation(state) == "report_writer"
 
 
 def test_attempts_one_below_max_still_loops():
-    state = {"validation_result": "insufficient", "attempts": settings.max_validation_attempts - 1}
+    state = {"validation_result": "insufficient",
+             "attempts": settings.max_validation_attempts - 1, "mode": "research"}
     assert route_after_validation(state) == "research"
 
 
-def test_sufficient_at_max_attempts_routes_to_synthesis():
-    state = {"validation_result": "sufficient", "attempts": settings.max_validation_attempts}
-    assert route_after_validation(state) == "synthesis"
+def test_sufficient_at_max_attempts_exits_loop():
+    state = {"validation_result": "sufficient",
+             "attempts": settings.max_validation_attempts, "mode": "research"}
+    assert route_after_validation(state) == "voting_synthesis"
 
 
 # ---------------------------------------------------------------------------

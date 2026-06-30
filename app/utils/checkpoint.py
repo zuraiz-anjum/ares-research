@@ -46,17 +46,26 @@ CREATE TABLE IF NOT EXISTS node_checkpoints (
     status         TEXT NOT NULL,      -- started | completed | failed | interrupted
     input_summary  TEXT,               -- JSON compact state snapshot
     output_summary TEXT,               -- JSON compact output snapshot
-    error          TEXT,               -- traceback on failed
+    error          TEXT,               -- full traceback on failed
+    error_type     TEXT,               -- exception class name (e.g. "ValueError")
     duration_ms    INTEGER,
     timestamp      TEXT NOT NULL
 )
 """
+
+# Add error_type column to existing DBs that were created before it existed.
+_MIGRATION_DDL = "ALTER TABLE node_checkpoints ADD COLUMN error_type TEXT"
 
 
 def _ensure_table_sync() -> None:
     try:
         with sqlite3.connect(ANALYTICS_DB) as db:
             db.execute(_TABLE_DDL)
+            try:
+                db.execute(_MIGRATION_DDL)
+                db.commit()
+            except Exception:
+                pass  # column already exists
     except Exception:
         pass
 
@@ -68,21 +77,25 @@ def _save_sync(
     input_summary: dict | None = None,
     output_summary: dict | None = None,
     error: str | None = None,
+    error_type: str | None = None,
     duration_ms: int | None = None,
 ) -> None:
     try:
         with sqlite3.connect(ANALYTICS_DB) as db:
             db.execute(_TABLE_DDL)
+            try:
+                db.execute(_MIGRATION_DDL); db.commit()
+            except Exception:
+                pass
             db.execute(
                 "INSERT INTO node_checkpoints "
-                "(thread_id, node, status, input_summary, output_summary, error, duration_ms, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(thread_id, node, status, input_summary, output_summary, error, error_type, duration_ms, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread_id, node, status,
                     json.dumps(input_summary) if input_summary else None,
                     json.dumps(output_summary) if output_summary else None,
-                    error,
-                    duration_ms,
+                    error, error_type, duration_ms,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
@@ -98,27 +111,53 @@ async def _save_async(
     input_summary: dict | None = None,
     output_summary: dict | None = None,
     error: str | None = None,
+    error_type: str | None = None,
     duration_ms: int | None = None,
 ) -> None:
     try:
         async with aiosqlite.connect(ANALYTICS_DB) as db:
             await db.execute(_TABLE_DDL)
+            try:
+                await db.execute(_MIGRATION_DDL)
+                await db.commit()
+            except Exception:
+                pass
             await db.execute(
                 "INSERT INTO node_checkpoints "
-                "(thread_id, node, status, input_summary, output_summary, error, duration_ms, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(thread_id, node, status, input_summary, output_summary, error, error_type, duration_ms, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     thread_id, node, status,
                     json.dumps(input_summary) if input_summary else None,
                     json.dumps(output_summary) if output_summary else None,
-                    error,
-                    duration_ms,
+                    error, error_type, duration_ms,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
             await db.commit()
     except Exception:
         logger.warning(f"checkpoint_save_async_failed node={node}", exc_info=True)
+
+
+async def save_sub_agent_error(node: str, sub_label: str, exc: Exception) -> None:
+    """Record an error from a parallel sub-agent (e.g. a variant in voting_synthesis).
+
+    Called from within parallel runners (asyncio.gather blocks) where exceptions
+    are caught to avoid cancelling sibling tasks. Without this call those errors
+    would be silently swallowed and invisible in /diagnostics or /errors.
+    """
+    tid = _current_thread_id.get()
+    tb  = traceback.format_exc()
+    await _save_async(
+        tid, node, "failed",
+        input_summary={"sub_label": sub_label},
+        error=tb[:3000],
+        error_type=type(exc).__name__,
+    )
+    logger.warning(
+        f"[CP] sub_agent_error node={node} sub={sub_label} "
+        f"error_type={type(exc).__name__} thread={tid}: {exc!r}"
+    )
 
 
 # ── State summarisers ────────────────────────────────────────────────────────
@@ -197,23 +236,27 @@ def checkpoint(fn):
                 f"[CP] node={node_name} status=started thread={tid} "
                 f"mode={in_sum.get('mode','-')} msgs={in_sum.get('messages_count',0)}"
             )
-            asyncio.create_task(_save_async(tid, node_name, "started", input_summary=in_sum))
+            await _save_async(tid, node_name, "started", input_summary=in_sum)
 
             try:
                 result = await fn(state, *args, **kwargs)
             except GraphInterrupt:
                 ms = int((time.monotonic() - t0) * 1000)
                 logger.info(f"[CP] node={node_name} status=interrupted thread={tid} duration_ms={ms}")
-                asyncio.create_task(_save_async(tid, node_name, "interrupted", duration_ms=ms))
+                await _save_async(tid, node_name, "interrupted", duration_ms=ms)
                 raise
             except Exception as exc:
                 ms = int((time.monotonic() - t0) * 1000)
                 tb = traceback.format_exc()
+                etype = type(exc).__name__
                 logger.error(
                     f"[CP] node={node_name} status=FAILED thread={tid} "
-                    f"duration_ms={ms} error={exc!r}\n{tb}"
+                    f"error_type={etype} duration_ms={ms} error={exc!r}\n{tb}"
                 )
-                asyncio.create_task(_save_async(tid, node_name, "failed", error=tb[:3000], duration_ms=ms))
+                await _save_async(
+                    tid, node_name, "failed",
+                    input_summary=in_sum, error=tb[:3000], error_type=etype, duration_ms=ms,
+                )
                 raise
 
             ms = int((time.monotonic() - t0) * 1000)
@@ -222,7 +265,7 @@ def checkpoint(fn):
                 f"[CP] node={node_name} status=completed thread={tid} "
                 f"duration_ms={ms} outputs={list(out_sum.keys())}"
             )
-            asyncio.create_task(_save_async(tid, node_name, "completed", output_summary=out_sum, duration_ms=ms))
+            await _save_async(tid, node_name, "completed", output_summary=out_sum, duration_ms=ms)
             return result
 
         return _async_wrapper
@@ -250,11 +293,13 @@ def checkpoint(fn):
             except Exception as exc:
                 ms = int((time.monotonic() - t0) * 1000)
                 tb = traceback.format_exc()
+                etype = type(exc).__name__
                 logger.error(
                     f"[CP] node={node_name} status=FAILED thread={tid} "
-                    f"duration_ms={ms} error={exc!r}\n{tb}"
+                    f"error_type={etype} duration_ms={ms} error={exc!r}\n{tb}"
                 )
-                _save_sync(tid, node_name, "failed", error=tb[:3000], duration_ms=ms)
+                _save_sync(tid, node_name, "failed",
+                           input_summary=in_sum, error=tb[:3000], error_type=etype, duration_ms=ms)
                 raise
 
             ms = int((time.monotonic() - t0) * 1000)

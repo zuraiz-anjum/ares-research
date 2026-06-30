@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     # Leave empty to disable auth (development default).
     app_password: str = ""
 
+    # --- Cost & budget --------------------------------------------------------
+    # Estimated cost per 1K tokens in USD (adjust per provider).
+    cost_per_1k_tokens_usd: float = 0.001
+    # Max cumulative USD cost allowed per session (thread).
+    # Queries that would exceed this are aborted with a graceful message.
+    session_cost_budget_usd: float = 0.50
+    # When True, downgrade expensive modes before hard-aborting.
+    # e.g. "plan" (7 LLM calls) → "research" (6) → "chat" (1)
+    downgrade_on_budget_pressure: bool = True
+
+    # --- Search result cache --------------------------------------------------
+    # Cache Tavily results so repeated / similar queries skip the API.
+    search_cache_enabled: bool = True
+    search_cache_ttl_seconds: int = 3600   # 1 hour default
+
+    # --- Confidence calibration -----------------------------------------------
+    # How many completed requests to look back when recalibrating threshold.
+    calibration_window: int = 100
+
     # --- Observability --------------------------------------------------------
     # Set LANGSMITH_API_KEY to enable LangSmith tracing of every graph run.
     langsmith_api_key: str = ""

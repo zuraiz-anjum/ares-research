@@ -17,6 +17,7 @@ from app.config import settings, truncate_to_budget
 from app.llm import get_llm
 from app.state import AgentState
 from app.tools.search import MOCK_RESULTS, tavily_search
+from app.utils.search_cache import cached_search
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def _get_queries(state: AgentState) -> list[str]:
 async def _fetch_one(query: str) -> tuple[list, int, list[dict]]:
     """Run a single Tavily search asynchronously using a thread executor."""
     loop = asyncio.get_event_loop()
-    results = await loop.run_in_executor(None, tavily_search, query)
+    results = await loop.run_in_executor(None, cached_search, query)
     srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
             for r in results if r.get("url")]
     return results, len(results), srcs

@@ -41,6 +41,14 @@ from app.config import settings, validate_settings
 import app.graph as _graph_mod
 from app.graph import build_graph
 from app.utils.checkpoint import set_thread_id, _TABLE_DDL, ANALYTICS_DB as _CP_ANALYTICS_DB
+from app.utils.cost_tracker import check_cost_budget, budget_summary, get_thread_token_total
+from app.utils.calibration import (
+    record as _record_calibration,
+    record_prompt_metric as _record_prompt_metric,
+    calibration_report,
+    prompt_health_report,
+)
+from app.utils.search_cache import cache_stats as _search_cache_stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -445,6 +453,11 @@ async def chat(request: Request, req: ChatRequest) -> dict:
     if not _check_auth(request):
         raise HTTPException(401, "Authentication required")
     thread_id = req.thread_id or str(uuid.uuid4())
+    # Cost budget guard — aborts and logs when the projected session cost would
+    # exceed SESSION_COST_BUDGET_USD (configured in .env / config.py).
+    budget_err = await check_cost_budget(thread_id, req.message, DB_PATH)
+    if budget_err:
+        return budget_err
     inputs: dict = {
         "messages":          [HumanMessage(content=req.message)],
         "attempts":          0,
@@ -533,6 +546,12 @@ async def chat_stream(
         config = {"configurable": {"thread_id": _thread_id}}
         set_thread_id(_thread_id)
 
+        # Cost budget guard — aborts before hitting the graph.
+        budget_err = await check_cost_budget(_thread_id, message, DB_PATH)
+        if budget_err:
+            yield sse({"type": "error", "message": budget_err["answer"]})
+            return
+
         full_answer = ""
         sub_queries: list[str] = []
         critique = ""
@@ -546,6 +565,10 @@ async def chat_stream(
         detected_mode = "research"
         confidence_score: int = -1
         final_output: dict = {}
+        # Calibration tracking signals (populated during streaming)
+        draft_score: int = -1
+        vote_winner: str = ""
+        challenger_found: bool | None = None
         t_start = time.monotonic()
 
         try:
@@ -592,6 +615,7 @@ async def chat_stream(
                         d_score    = out.get("draft_score", -1)
                         d_feedback = out.get("revision_feedback", "")
                         d_revision = out.get("revision_count", 0)
+                        draft_score = d_score  # calibration tracking
                         if d_feedback:
                             yield sse({"type": "revision", "round": d_revision,
                                        "score": d_score, "feedback": d_feedback[:300]})
@@ -600,6 +624,7 @@ async def chat_stream(
                     elif name == "voting_synthesis" and node == "voting_synthesis":
                         winner = out.get("vote_winner", "")
                         reason = out.get("vote_reason", "")
+                        vote_winner = winner  # calibration tracking
                         if winner:
                             yield sse({"type": "vote_result",
                                        "winner": winner, "reason": reason})
@@ -612,6 +637,7 @@ async def chat_stream(
                     elif name == "challenger" and node == "challenger":
                         queries = out.get("challenge_queries") or []
                         counter = out.get("counter_evidence", "")
+                        challenger_found = bool(counter)  # calibration tracking
                         if queries and counter:
                             yield sse({"type": "debate",
                                        "challenge_queries": queries,
@@ -715,6 +741,28 @@ async def chat_stream(
         _history.appendleft(session)
         asyncio.create_task(_save_session(session))
         asyncio.create_task(_save_usage(detected_mode, token_count, latency_ms, provider_used, confidence_score))
+
+        # Record calibration signals for confidence / quality analysis.
+        asyncio.create_task(_record_calibration(
+            thread_id=_thread_id, mode=detected_mode, confidence_score=confidence_score,
+            fact_check_results=fact_check_results, draft_score=draft_score,
+            challenger_found=challenger_found, vote_winner=vote_winner, latency_ms=latency_ms,
+        ))
+        # Per-node quality metrics for prompt health dashboard.
+        if draft_score >= 0:
+            asyncio.create_task(_record_prompt_metric("draft_critic", "draft_score", float(draft_score), detected_mode))
+        if fact_check_results:
+            _passed = sum(
+                1 for r in fact_check_results
+                if isinstance(r, dict) and r.get("result", "").lower() in ("true", "pass", "supported", "verified")
+            )
+            asyncio.create_task(_record_prompt_metric(
+                "fact_checker", "pass_rate", _passed / len(fact_check_results), detected_mode
+            ))
+        if challenger_found is not None:
+            asyncio.create_task(_record_prompt_metric("challenger", "counter_found", float(challenger_found), detected_mode))
+        if vote_winner:
+            asyncio.create_task(_record_prompt_metric("voting_synthesis", f"winner_{vote_winner}", 1.0, detected_mode))
 
         # Fire Slack webhook in background if configured and report-worthy.
         if settings.slack_webhook_url and detected_mode in ("research", "report", "pdf", "comparison"):
@@ -1186,6 +1234,111 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse("static/index.html")
+
+
+# ── Confidence calibration ─────────────────────────────────────────────────────
+
+
+@app.get("/calibration")
+async def calibration_endpoint(request: Request, window: int = 100) -> dict:
+    """Return confidence calibration statistics.
+
+    Analyses whether high self-reported confidence actually predicts high
+    fact-check pass rates and draft quality. Recommends a better threshold
+    if the current one is over- or under-calibrated.
+
+    Query params:
+      window — how many recent requests to analyse (default 100)
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    return await calibration_report(window)
+
+
+# ── Prompt health ──────────────────────────────────────────────────────────────
+
+
+@app.get("/prompt-health")
+async def prompt_health_endpoint(request: Request, hours: int = 24) -> dict:
+    """Return per-node quality metrics and health alerts.
+
+    Tracks: fact_check pass rate, draft_critic scores, challenger counter-evidence
+    rate, and voting_synthesis winner distribution. Emits alerts when metrics
+    fall below expected thresholds.
+
+    Query params:
+      hours — look-back window (default 24)
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    return await prompt_health_report(hours)
+
+
+# ── Session cost summary ───────────────────────────────────────────────────────
+
+
+@app.get("/cost/{thread_id}")
+async def thread_cost(request: Request, thread_id: str) -> dict:
+    """Return token usage and cost breakdown for a specific conversation thread.
+
+    Useful for debugging unexpectedly expensive sessions and verifying that
+    the budget guard is firing at the right threshold.
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    tokens = await get_thread_token_total(thread_id, DB_PATH)
+    return {"thread_id": thread_id, **budget_summary(tokens)}
+
+
+@app.get("/cost")
+async def global_cost(request: Request) -> dict:
+    """Return overall token usage across all sessions (last 24 hours)."""
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT COALESCE(SUM(token_count), 0), COUNT(*) "
+            "FROM sessions WHERE timestamp >= datetime('now', '-24 hours')"
+        )
+        row = await cur.fetchone()
+    total_tokens = int(row[0]) if row else 0
+    total_reqs   = int(row[1]) if row else 0
+    from app.utils.cost_tracker import tokens_to_usd, session_token_limit
+    return {
+        "window_hours":    24,
+        "total_tokens":    total_tokens,
+        "total_requests":  total_reqs,
+        "estimated_usd":   round(tokens_to_usd(total_tokens), 4),
+        "session_budget_usd": settings.session_cost_budget_usd,
+        "token_limit_per_session": session_token_limit(),
+    }
+
+
+# ── Search cache stats ─────────────────────────────────────────────────────────
+
+
+@app.get("/cache/stats")
+async def cache_stats_endpoint(request: Request) -> dict:
+    """Return search result cache hit/miss/evict statistics.
+
+    A high hit rate means repeated queries are being served from the local
+    SQLite cache instead of hitting the Tavily API.
+    """
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
+    stats = _search_cache_stats()
+    hit   = stats.get("hit", 0)
+    miss  = stats.get("miss", 0)
+    total = hit + miss
+    return {
+        "hits":            hit,
+        "misses":          miss,
+        "evictions":       stats.get("evict", 0),
+        "cached_entries":  stats.get("cached_entries", 0),
+        "hit_rate":        round(hit / total, 3) if total > 0 else 0.0,
+        "cache_ttl_seconds": settings.search_cache_ttl_seconds,
+        "cache_enabled":   settings.search_cache_enabled,
+    }
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Wires all agents into a LangGraph state machine.
 
 Pipelines by mode (set by intent_router after clarity):
 
-  research      → decomposer → research → validator* → synthesis → challenger → fact_checker → critic → suggestions → END
+  research      → decomposer → research → validator* → voting_synthesis (×3 parallel) → challenger → fact_checker → critic → suggestions → END
   report        → decomposer → research → validator* → report_writer → data_visualizer → suggestions → END
   pdf           → decomposer → research → validator* → report_writer → data_visualizer → pdf_generator → suggestions → END
   academic      → decomposer → research → validator* → academic_writer → data_visualizer → pdf_generator → suggestions → END
@@ -51,6 +51,7 @@ from app.agents.suggestions import suggestions_node
 from app.agents.survey_analyst import survey_analyst_node
 from app.agents.challenger import challenger_node
 from app.agents.synthesis import synthesis_node
+from app.agents.voting_synthesis import voting_synthesis_node
 from app.agents.validator import validator_node
 from app.config import settings
 from app.state import AgentState
@@ -72,7 +73,9 @@ def _after_research_pipeline(state: AgentState) -> str:
         return "debate_writer"
     if mode == "email":
         return "email_drafter"
-    return "synthesis"  # research, plan
+    if mode == "research":
+        return "voting_synthesis"   # parallel multi-perspective reasoning
+    return "synthesis"  # plan, document fallback
 
 
 def route_after_data_visualizer(state: AgentState) -> str:
@@ -136,16 +139,21 @@ def route_after_validation(state: AgentState) -> str:
 
 
 def route_after_synthesis(state: AgentState) -> str:
-    # Research and plan modes debate first, then fact_checker → critic → suggestions.
-    if state.get("mode") in ("research", "plan"):
+    # plan mode debates first; chat/document go straight to suggestions.
+    if state.get("mode") == "plan":
         return "challenger"
     return "suggestions"
+
+def route_after_voting_synthesis(_state: AgentState) -> str:
+    # voting_synthesis is research mode only — always debates.
+    return "challenger"
 
 
 _RESEARCH_PIPELINE_TARGETS = {
     "research":          "research",
     "validator":         "validator",
     "synthesis":         "synthesis",
+    "voting_synthesis":  "voting_synthesis",
     "report_writer":     "report_writer",
     "academic_writer":   "academic_writer",
     "data_analyst":      "data_analyst",
@@ -174,6 +182,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_node("email_drafter",     cp(email_drafter_node))
     builder.add_node("fact_checker",      cp(fact_checker_node))
     builder.add_node("synthesis",         cp(synthesis_node))
+    builder.add_node("voting_synthesis",  cp(voting_synthesis_node))
     builder.add_node("challenger",        cp(challenger_node))
     builder.add_node("report_writer",     cp(report_writer_node))
     builder.add_node("academic_writer",   cp(academic_writer_node))
@@ -217,6 +226,10 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     builder.add_conditional_edges(
         "synthesis", route_after_synthesis,
         {"challenger": "challenger", "suggestions": "suggestions"},
+    )
+    builder.add_conditional_edges(
+        "voting_synthesis", route_after_voting_synthesis,
+        {"challenger": "challenger"},
     )
     builder.add_edge("challenger",        "fact_checker")
     builder.add_edge("fact_checker",      "critic")

@@ -473,7 +473,7 @@ async def history() -> dict:
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
     "doc_agent", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
-    "challenger", "report_writer", "draft_critic", "academic_writer", "pdf_generator",
+    "challenger", "voting_synthesis", "report_writer", "draft_critic", "academic_writer", "pdf_generator",
     "chart_writer", "code_writer", "email_drafter",
     "fact_checker", "critic", "suggestions",
 }
@@ -597,6 +597,12 @@ async def chat_stream(
                                        "score": d_score, "feedback": d_feedback[:300]})
                         else:
                             yield sse({"type": "draft_accepted", "score": d_score})
+                    elif name == "voting_synthesis" and node == "voting_synthesis":
+                        winner = out.get("vote_winner", "")
+                        reason = out.get("vote_reason", "")
+                        if winner:
+                            yield sse({"type": "vote_result",
+                                       "winner": winner, "reason": reason})
                     elif name == "challenger" and node == "challenger":
                         queries = out.get("challenge_queries") or []
                         counter = out.get("counter_evidence", "")

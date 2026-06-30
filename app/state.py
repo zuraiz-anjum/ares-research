@@ -87,6 +87,11 @@ class AgentState(TypedDict, total=False):
     counter_evidence:  str   # raw counter-evidence text found by challenger
     synthesis_draft:   str   # first-pass synthesis answer (before reconciliation)
 
+    # Voting synthesis output (research mode only).
+    vote_winner:    str   # "analyst" | "devils_advocate" | "communicator"
+    vote_reason:    str   # one-sentence judge explanation
+    vote_responses: dict  # {"analyst": str, "devils_advocate": str, "communicator": str}
+
     # Request telemetry (populated in main.py after graph completes).
     token_count: int      # approximate tokens used this turn
     provider_used: str    # which LLM provider served the request

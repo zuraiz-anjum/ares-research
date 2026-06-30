@@ -250,6 +250,23 @@
       color: var(--error-text);
     }
 
+    /* ── Vote badge ─────────────────────── */
+    .vote-badge {
+      margin-top: 8px;
+      padding: 6px 11px;
+      background: rgba(16,185,129,0.07);
+      border: 1px solid rgba(16,185,129,0.2);
+      border-radius: 6px;
+      font-size: 11.5px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: baseline;
+    }
+    .vote-icon   { margin-right: 4px; }
+    .vote-winner { color: #6ee7b7; font-weight: 600; }
+    .vote-reason { color: #9ca3af; font-size: 11px; }
+
     /* ── Debate badge ───────────────────── */
     .debate-badge {
       margin-top: 8px;
@@ -1422,7 +1439,7 @@
 
   // Pipeline configs per mode — defines which nodes appear and in what order.
   const PIPELINE_CONFIGS = {
-    research:      ["clarity", "intent_router", "decomposer", "research", "synthesis", "challenger", "fact_checker", "critic", "suggestions"],
+    research:      ["clarity", "intent_router", "decomposer", "research", "voting_synthesis", "challenger", "fact_checker", "critic", "suggestions"],
     report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
     pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "pdf_generator", "suggestions"],
     academic:      ["clarity", "intent_router", "decomposer", "research", "academic_writer", "data_visualizer", "pdf_generator", "suggestions"],
@@ -1441,7 +1458,7 @@
 
   const NODE_LABELS = {
     clarity: "Clarity", intent_router: "Route", decomposer: "Decompose",
-    research: "Research", synthesis: "Synthesis", critic: "Critique",
+    research: "Research", synthesis: "Synthesis", voting_synthesis: "Vote", critic: "Critique",
     report_writer: "Report", draft_critic: "Draft Critic", doc_agent: "Document", validator: "Validate",
     data_analyst: "Analyse", code_writer: "Code", suggestions: "Suggest",
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
@@ -1851,7 +1868,8 @@
     data_visualizer: "Visualize", survey_analyst: "Survey",
     pdf_generator: "PDF", chart_writer: "Chart", data_analyst: "Data",
     comparison_matrix: "Compare", debate_writer: "Debate", email_drafter: "Email",
-    code_writer: "Code", planner: "Planner", draft_critic: "Critic", challenger: "Debate",
+    code_writer: "Code", planner: "Planner", draft_critic: "Critic",
+    challenger: "Debate", voting_synthesis: "Vote",
   };
 
   function buildPipelineDiagram(pipeline, activeNode) {
@@ -2538,6 +2556,7 @@
             data_visualizer: "Generating charts...",
             survey_analyst:  "Analysing survey data...",
             draft_critic:    "Critiquing draft...",
+            voting_synthesis: "Running 3 perspectives in parallel...",
             challenger:      "Stress-testing the answer...",
             academic_writer: null,  // streaming node
             data_analyst:    null,  // streaming node
@@ -2594,6 +2613,21 @@
         case "critique": {
           botGroup?.querySelector(".critique-spinner")?.remove();
           if (botGroup && data.content) appendCritique(botGroup, data.content);
+          break;
+        }
+
+        case "vote_result": {
+          if (botGroup && data.winner) {
+            const labels = { analyst: "Analyst", devils_advocate: "Devil's Advocate", communicator: "Communicator" };
+            const badge = document.createElement("div");
+            badge.className = "vote-badge";
+            badge.innerHTML =
+              `<span class="vote-icon">⚖</span>` +
+              `<span class="vote-winner">${labels[data.winner] || data.winner} perspective selected</span>` +
+              (data.reason ? `<span class="vote-reason"> — ${data.reason}</span>` : "");
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
           break;
         }
 

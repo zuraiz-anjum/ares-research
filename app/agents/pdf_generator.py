@@ -367,19 +367,28 @@ def _generate_academic_pdf(state: dict) -> str:
     # ── Paper body (sections 1-5) ──────────────────────────────────────────
     story.extend(_academic_md_to_flowables(report_text, styles))
 
-    # ── Chart as Figure 1 ──────────────────────────────────────────────────
-    chart_url = state.get("chart_url", "")
-    if chart_url:
-        chart_path = chart_url.lstrip("/")
-        if os.path.exists(chart_path):
-            story.append(Spacer(1, 12))
-            story.append(HRFlowable(width="100%", thickness=0.5,
-                                    color=C("#cccccc"), spaceBefore=4, spaceAfter=8))
+    # ── Charts (all figures from data_visualizer) ──────────────────────────
+    chart_urls = state.get("chart_urls") or []
+    if not chart_urls:
+        first = state.get("chart_url", "")
+        if first:
+            chart_urls = [first]
+    if chart_urls:
+        story.append(Spacer(1, 12))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                color=C("#cccccc"), spaceBefore=4, spaceAfter=8))
+        story.append(Paragraph("Data Visualisations", styles["h2"]))
+        for fig_num, curl in enumerate(chart_urls, 1):
+            chart_path = curl.lstrip("/")
+            if not os.path.exists(chart_path):
+                continue
             story.append(Image(chart_path, width=5.8 * inch, height=3.1 * inch))
             story.append(Paragraph(
-                f"<i>Figure 1: Data visualisation for \"{_inline_md(query[:60])}\"</i>",
+                f"<i>Figure {fig_num}: Data visualisation for "
+                f"\"{_inline_md(query[:60])}\"</i>",
                 styles["figure_caption"],
             ))
+            story.append(Spacer(1, 8))
 
     # ── Footer ────────────────────────────────────────────────────────────
     story.append(Spacer(1, 20))

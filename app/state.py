@@ -75,6 +75,10 @@ class AgentState(TypedDict, total=False):
     # Survey mode: True when the attached file is a CSV/Excel survey.
     is_survey: bool
 
+    # Data Extractor output — path to cleaned CSV of quantitative research data.
+    extracted_csv_path:  str   # absolute path; empty string if no quantitative data found
+    data_is_quantitative: bool  # True when data_extractor found chartable numbers
+
     # Long-conversation memory: compressed summary of older turns.
     conversation_summary: str
 

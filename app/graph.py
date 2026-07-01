@@ -29,6 +29,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.academic_writer import academic_writer_node
+from app.agents.data_extractor import data_extractor_node
 from app.agents.chart_writer import chart_writer_node
 from app.agents.draft_critic import draft_critic_node, MAX_REVISIONS
 from app.agents.clarity import clarity_node
@@ -62,14 +63,10 @@ from app.utils.checkpoint import checkpoint
 def _after_research_pipeline(state: AgentState) -> str:
     """After sufficient research, route to the appropriate output node."""
     mode = state.get("mode", "research")
-    if mode in ("report", "pdf"):
-        return "report_writer"
-    if mode == "academic":
-        return "academic_writer"
-    if mode == "data_analysis":
-        return "data_analyst"
-    if mode == "comparison":
-        return "comparison_matrix"
+    # Modes that produce visual reports go through data_extractor first so
+    # the visualizer has structured CSV data rather than raw prose.
+    if mode in ("report", "pdf", "academic", "data_analysis", "comparison"):
+        return "data_extractor"
     if mode == "debate":
         return "debate_writer"
     if mode == "email":
@@ -79,6 +76,20 @@ def _after_research_pipeline(state: AgentState) -> str:
     if mode == "plan":
         return "dynamic_spawner"    # findings-aware agent selection
     return "synthesis"  # document fallback
+
+
+def route_after_data_extractor(state: AgentState) -> str:
+    """Route from data_extractor to the appropriate writer based on mode."""
+    mode = state.get("mode", "report")
+    if mode in ("report", "pdf"):
+        return "report_writer"
+    if mode == "academic":
+        return "academic_writer"
+    if mode == "data_analysis":
+        return "data_analyst"
+    if mode == "comparison":
+        return "comparison_matrix"
+    return "report_writer"
 
 
 def route_after_data_visualizer(state: AgentState) -> str:
@@ -163,6 +174,7 @@ _RESEARCH_PIPELINE_TARGETS = {
     "synthesis":         "synthesis",
     "voting_synthesis":  "voting_synthesis",
     "dynamic_spawner":   "dynamic_spawner",
+    "data_extractor":    "data_extractor",
     "report_writer":     "report_writer",
     "academic_writer":   "academic_writer",
     "data_analyst":      "data_analyst",
@@ -180,6 +192,7 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
     cp = checkpoint  # alias for readability
     builder.add_node("clarity",           cp(clarity_node))
     builder.add_node("intent_router",     cp(intent_router_node))
+    builder.add_node("data_extractor",    cp(data_extractor_node))
     builder.add_node("planner",           cp(planner_node))
     builder.add_node("decomposer",        cp(decomposer_node))
     builder.add_node("research",          cp(research_node))
@@ -217,6 +230,17 @@ def build_graph(checkpointer: BaseCheckpointSaver | None = None):
             "planner":        "planner",
             "chart_writer":   "chart_writer",
             "survey_analyst": "survey_analyst",
+        },
+    )
+
+    # data_extractor → writer (mode-specific)
+    builder.add_conditional_edges(
+        "data_extractor", route_after_data_extractor,
+        {
+            "report_writer":   "report_writer",
+            "academic_writer": "academic_writer",
+            "data_analyst":    "data_analyst",
+            "comparison_matrix": "comparison_matrix",
         },
     )
 

@@ -80,10 +80,12 @@ def test_max_confidence_routes_to_voting_synthesis():
 @pytest.mark.parametrize("mode,expected", [
     ("research",      "voting_synthesis"),   # parallel voting
     ("plan",          "dynamic_spawner"),    # findings-aware spawn
-    ("report",        "report_writer"),
-    ("pdf",           "report_writer"),
-    ("data_analysis", "data_analyst"),
-    ("comparison",    "comparison_matrix"),
+    # Visual modes now go through data_extractor before the writer
+    ("report",        "data_extractor"),
+    ("pdf",           "data_extractor"),
+    ("data_analysis", "data_extractor"),
+    ("comparison",    "data_extractor"),
+    ("academic",      "data_extractor"),
     ("debate",        "debate_writer"),
     ("email",         "email_drafter"),
 ])
@@ -98,9 +100,9 @@ def test_mode_routing_after_research(mode, expected):
 # ---------------------------------------------------------------------------
 
 def test_sufficient_validation_routes_to_output_node():
-    # Validation sufficient for report mode → report_writer
+    # Validation sufficient for report mode → data_extractor (then report_writer)
     state = {"validation_result": "sufficient", "attempts": 1, "mode": "report"}
-    assert route_after_validation(state) == "report_writer"
+    assert route_after_validation(state) == "data_extractor"
 
 
 def test_sufficient_validation_research_routes_to_voting_synthesis():
@@ -117,7 +119,7 @@ def test_max_attempts_reached_exits_loop():
     """When attempts hit the max, stop looping and proceed to output."""
     state = {"validation_result": "insufficient",
              "attempts": settings.max_validation_attempts, "mode": "report"}
-    assert route_after_validation(state) == "report_writer"
+    assert route_after_validation(state) == "data_extractor"
 
 
 def test_attempts_one_below_max_still_loops():

@@ -1,15 +1,23 @@
 """Data Visualizer agent.
 
-After Tavily research, extracts numerical data from findings and generates
-2-3 charts by running LLM-authored Python code in isolated subprocesses.
+Generates 2-3 matplotlib charts from research data and saves them as PNGs.
 
-Pipeline position (replaces chart_writer for research-derived modes):
-  research → [writer] → data_visualizer → [pdf_generator | suggestions]
+Two modes depending on upstream data_extractor output:
+
+  CSV mode  — extracted_csv_path is set: loads structured DataFrames, gives
+              the LLM precise numbers → higher quality charts.
+  Text mode — no CSV: LLM extracts numbers from the report text (fallback).
+
+Pipeline position:
+  data_extractor → [writer] → draft_critic → data_visualizer → [pdf_generator | suggestions]
 """
 
+import json
 import logging
+import os
 from typing import Literal
 
+import pandas as pd
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -25,34 +33,52 @@ _DARK = dict(
     palette='["#4C72B0","#DD8452","#55A868","#C44E52","#8172B3","#CCB974","#DA8BC3"]',
 )
 
-VIZ_SYSTEM_PROMPT = f"""You are a data visualisation expert.
+# ── Shared constants injected into every chart subprocess ─────────────────────
+_DARK_SETUP = (
+    f'BG      = "{_DARK["bg"]}"\n'
+    f'PANEL   = "{_DARK["panel"]}"\n'
+    f'TEXT    = "{_DARK["text"]}"\n'
+    f'PALETTE = {_DARK["palette"]}\n'
+)
 
-Given research findings, extract all numerical data and write Python/matplotlib
-code to generate 2-3 meaningful, distinct charts.
-
-Dark-theme constants injected for you (use them):
-  BG      = "{_DARK['bg']}"
-  PANEL   = "{_DARK['panel']}"
-  TEXT    = "{_DARK['text']}"
-  PALETTE = {_DARK['palette']}
-
-Each chart's code block MUST:
+_CHART_RULES = """\
+Each chart code block MUST:
   1. Start with: fig, ax = plt.subplots(figsize=(10, 5.5))
   2. Apply: fig.patch.set_facecolor(BG); ax.set_facecolor(PANEL)
-  3. Set tick/label colours to TEXT
-  4. Set a clear title and axis labels
+  3. Set tick/label/title colours to TEXT
+  4. Give a clear title and axis labels
   5. NOT contain import statements (already provided)
-  6. NOT contain plt.savefig() or plt.show() (appended automatically)
-  7. Contain only real data extracted from the findings — no placeholders
+  6. NOT call plt.savefig() or plt.show() (appended automatically)
+  7. Use only real data — no placeholders
 
 Chart-type guide:
   bar / horizontal_bar — comparing discrete entities or time periods
   line                 — trends over consecutive time points
-  pie                  — proportions that sum to 100 %
+  pie                  — proportions that sum to ~100 %
   scatter              — correlation between two numeric variables
 
-Fewer high-quality charts beat many mediocre ones. If there is not enough
-numerical data for a second or third chart, return fewer."""
+Fewer high-quality charts beat many mediocre ones."""
+
+# ── CSV-mode system prompt ─────────────────────────────────────────────────────
+CSV_VIZ_PROMPT = f"""You are a data visualisation expert.
+
+You receive structured DataFrames extracted from research findings. Write Python/
+matplotlib code to produce 2-3 distinct, insightful charts using these DataFrames.
+
+Dark-theme constants already defined for you: BG, PANEL, TEXT, PALETTE
+DataFrames are pre-loaded as variables named after each table (snake_case).
+
+{_CHART_RULES}"""
+
+# ── Text-mode system prompt ────────────────────────────────────────────────────
+TEXT_VIZ_PROMPT = f"""You are a data visualisation expert.
+
+Given research findings, extract all numerical data and write Python/matplotlib
+code to generate 2-3 meaningful, distinct charts.
+
+Dark-theme constants already defined: BG, PANEL, TEXT, PALETTE
+
+{_CHART_RULES}"""
 
 
 class ChartCode(BaseModel):
@@ -64,75 +90,183 @@ class ChartCode(BaseModel):
 
 class VizPlan(BaseModel):
     charts: list[ChartCode] = Field(description="1-3 chart specs")
-    data_summary: str = Field(
-        description="One sentence summarising the numerical data found in findings"
-    )
+    data_summary: str = Field(description="One sentence summarising the data visualised")
 
 
-def _mock_charts() -> dict:
-    return {
-        "chart_urls": [],
-        "chart_url": "",
-        "messages": [AIMessage(content="(mock) data_visualizer skipped in mock mode.")],
-    }
+# ── CSV loading helper ─────────────────────────────────────────────────────────
 
+def _load_csv_tables(csv_path: str) -> dict[str, pd.DataFrame]:
+    """Parse the multi-table CSV written by data_extractor.
+
+    Returns {snake_case_table_name: DataFrame}.
+    """
+    tables: dict[str, pd.DataFrame] = {}
+    current_name: str | None = None
+    current_rows: list[list[str]] = []
+
+    def _flush():
+        nonlocal current_name, current_rows
+        if current_name and len(current_rows) >= 2:
+            header = current_rows[0]
+            data   = current_rows[1:]
+            df = pd.DataFrame(data, columns=header)
+            # Coerce numeric columns
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="ignore")
+            var_name = (
+                current_name.lower()
+                .replace(" ", "_")
+                .replace("-", "_")
+                .replace("/", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .strip("_")
+            )
+            tables[var_name] = df
+        current_name = None
+        current_rows = []
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        import csv as _csv
+        reader = _csv.reader(f)
+        for row in reader:
+            if not row:
+                _flush()
+                continue
+            if row[0].startswith("# Note:"):
+                continue
+            if row[0].startswith("# "):
+                _flush()
+                current_name = row[0][2:].strip()
+                continue
+            if current_name is not None:
+                current_rows.append(row)
+
+    _flush()
+    return tables
+
+
+def _build_df_setup(tables: dict[str, pd.DataFrame]) -> tuple[str, str]:
+    """Return (extra_setup_code, profile_text) for the chart subprocess and LLM prompt.
+
+    Each DataFrame is embedded as inline JSON so the subprocess does not need
+    to re-parse the multi-table CSV format.
+    """
+    setup_lines = [_DARK_SETUP, "import pandas as pd, json"]
+    profile_parts: list[str] = []
+
+    for var_name, df in tables.items():
+        records = df.to_dict(orient="records")
+        setup_lines.append(
+            f"{var_name} = pd.DataFrame({json.dumps(records, default=str)})"
+        )
+        for col in df.select_dtypes(include="object").columns:
+            setup_lines.append(
+                f"{var_name}[{col!r}] = pd.to_numeric({var_name}[{col!r}], errors='ignore')"
+            )
+        profile_parts.append(
+            f"DataFrame '{var_name}':\n"
+            f"  Columns: {list(df.columns)}\n"
+            f"  Shape: {df.shape[0]} rows x {df.shape[1]} cols\n"
+            f"  Sample:\n{df.head(5).to_string(index=False)}\n"
+        )
+
+    return "\n".join(setup_lines), "\n".join(profile_parts)
+
+
+# ── Main node ──────────────────────────────────────────────────────────────────
 
 async def data_visualizer_node(state: AgentState) -> dict:
     if settings.mock_mode:
-        return _mock_charts()
+        return {
+            "chart_urls": [],
+            "chart_url": "",
+            "messages": [AIMessage(content="(mock) data_visualizer skipped.")],
+        }
 
-    # Prefer writer output (report_content) so we visualise the already-
-    # synthesised text rather than raw scraped HTML.
+    query           = state.get("original_query", "")
+    csv_path        = state.get("extracted_csv_path", "") or ""
+    has_csv         = bool(csv_path and os.path.exists(csv_path))
+
+    if has_csv:
+        return await _run_csv_mode(state, query, csv_path)
+    else:
+        return await _run_text_mode(state, query)
+
+
+async def _run_csv_mode(state: AgentState, query: str, csv_path: str) -> dict:
+    """Generate charts from the structured CSV produced by data_extractor."""
+    tables = _load_csv_tables(csv_path)
+    if not tables:
+        logger.warning("data_visualizer csv_empty csv=%s", csv_path)
+        return await _run_text_mode(state, query)
+
+    extra_setup, profile_text = _build_df_setup(tables)
+
+    df_list = "\n".join(
+        f"  - '{name}': columns {list(df.columns)}" for name, df in tables.items()
+    )
+    user_prompt = (
+        f"Research topic: {query}\n\n"
+        f"Available DataFrames:\n{df_list}\n\n"
+        f"DataFrame profiles:\n{profile_text}"
+    )
+
+    llm  = get_llm(temperature=0).with_structured_output(VizPlan)
+    plan: VizPlan = await llm.ainvoke([
+        SystemMessage(content=CSV_VIZ_PROMPT),
+        HumanMessage(content=user_prompt),
+    ])
+
+    return _execute_plan(plan, extra_setup, "csv")
+
+
+async def _run_text_mode(state: AgentState, query: str) -> dict:
+    """Fallback: extract numbers from report text and generate charts."""
     findings = (
         state.get("report_content")
         or state.get("findings")
         or state.get("raw_research")
         or ""
     )
-    query = state.get("original_query", "")
-
     if not findings.strip():
-        logger.warning("data_visualizer_no_findings")
+        logger.warning("data_visualizer no_findings")
         return {
             "chart_urls": [],
-            "chart_url": "",
-            "messages": [AIMessage(content="No numerical data found to visualise.")],
+            "chart_url":  "",
+            "messages":   [AIMessage(content="No data found to visualise.")],
         }
 
     findings, _ = truncate_to_budget(findings, label="viz_findings")
 
-    llm = get_llm(temperature=0).with_structured_output(VizPlan)
+    llm  = get_llm(temperature=0).with_structured_output(VizPlan)
     plan: VizPlan = await llm.ainvoke([
-        SystemMessage(content=VIZ_SYSTEM_PROMPT),
-        HumanMessage(
-            content=f"Research topic: {query}\n\nFindings:\n{findings}"
-        ),
+        SystemMessage(content=TEXT_VIZ_PROMPT),
+        HumanMessage(content=f"Research topic: {query}\n\nFindings:\n{findings}"),
     ])
 
-    # Inject the dark-theme constants into each subprocess.
-    setup = (
-        f'BG = "{_DARK["bg"]}"\n'
-        f'PANEL = "{_DARK["panel"]}"\n'
-        f'TEXT = "{_DARK["text"]}"\n'
-        f'PALETTE = {_DARK["palette"]}\n'
-    )
+    return _execute_plan(plan, _DARK_SETUP, "text")
 
-    chart_urls: list[str] = []
+
+def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:
+    chart_urls:   list[str] = []
     figure_lines: list[str] = []
 
     for i, chart in enumerate(plan.charts, 1):
-        url = run_chart_code(chart.code, extra_setup=setup)
+        url = run_chart_code(chart.code, extra_setup=extra_setup)
         if url:
             chart_urls.append(url)
             figure_lines.append(
                 f"**Figure {i}: {chart.title}**\n_{chart.description}_"
             )
             logger.info(
-                "data_visualizer chart=%d type=%s url=%s", i, chart.chart_type, url
+                "data_visualizer mode=%s chart=%d type=%s url=%s",
+                mode, i, chart.chart_type, url,
             )
         else:
             logger.warning(
-                "data_visualizer chart=%d failed title=%r", i, chart.title
+                "data_visualizer mode=%s chart=%d failed title=%r",
+                mode, i, chart.title,
             )
 
     summary = plan.data_summary
@@ -141,7 +275,6 @@ async def data_visualizer_node(state: AgentState) -> dict:
 
     return {
         "chart_urls": chart_urls,
-        # Keep chart_url populated for backward-compat (pdf_generator reads it).
-        "chart_url": chart_urls[0] if chart_urls else "",
-        "messages": [AIMessage(content=summary)],
+        "chart_url":  chart_urls[0] if chart_urls else "",
+        "messages":   [AIMessage(content=summary)],
     }

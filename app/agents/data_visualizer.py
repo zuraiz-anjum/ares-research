@@ -235,13 +235,24 @@ async def _run_csv_mode(state: AgentState, query: str, csv_path: str, theme: str
         f"DataFrame profiles:\n{profile_text}"
     )
 
-    llm  = get_llm(temperature=0).with_structured_output(VizPlan)
-    plan: VizPlan = await llm.ainvoke([
-        SystemMessage(content=CSV_VIZ_PROMPT),
-        HumanMessage(content=user_prompt),
-    ])
+    try:
+        llm  = get_llm(temperature=0).with_structured_output(VizPlan)
+        plan: VizPlan = await llm.ainvoke([
+            SystemMessage(content=CSV_VIZ_PROMPT),
+            HumanMessage(content=user_prompt),
+        ])
+        return _execute_plan(plan, extra_setup, "csv")
+    except Exception:
+        logger.warning("data_visualizer csv_llm_failed — falling back to text mode", exc_info=True)
+        return await _run_text_mode(state, query, theme)
 
-    return _execute_plan(plan, extra_setup, "csv")
+
+_EMPTY_VIZ = {
+    "chart_urls":   [],
+    "chart_url":    "",
+    "chart_titles": [],
+    "messages":     [AIMessage(content="No charts generated.")],
+}
 
 
 async def _run_text_mode(state: AgentState, query: str, theme: str) -> dict:
@@ -254,22 +265,20 @@ async def _run_text_mode(state: AgentState, query: str, theme: str) -> dict:
     )
     if not findings.strip():
         logger.warning("data_visualizer no_findings")
-        return {
-            "chart_urls":   [],
-            "chart_url":    "",
-            "chart_titles": [],
-            "messages":     [AIMessage(content="No data found to visualise.")],
-        }
+        return _EMPTY_VIZ
 
     findings, _ = truncate_to_budget(findings, label="viz_findings")
 
-    llm  = get_llm(temperature=0).with_structured_output(VizPlan)
-    plan: VizPlan = await llm.ainvoke([
-        SystemMessage(content=TEXT_VIZ_PROMPT),
-        HumanMessage(content=f"Research topic: {query}\n\nFindings:\n{findings}"),
-    ])
-
-    return _execute_plan(plan, theme, "text")
+    try:
+        llm  = get_llm(temperature=0).with_structured_output(VizPlan)
+        plan: VizPlan = await llm.ainvoke([
+            SystemMessage(content=TEXT_VIZ_PROMPT),
+            HumanMessage(content=f"Research topic: {query}\n\nFindings:\n{findings}"),
+        ])
+        return _execute_plan(plan, theme, "text")
+    except Exception:
+        logger.warning("data_visualizer text_llm_failed", exc_info=True)
+        return _EMPTY_VIZ
 
 
 def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:

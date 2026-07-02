@@ -849,6 +849,34 @@
       letter-spacing: 0.2px;
     }
 
+    .beta-notice {
+      max-width: 720px; margin: 6px auto 0;
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: #666;
+      padding: 5px 10px;
+      background: rgba(255,255,255,0.025);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 6px;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      pointer-events: none;
+    }
+    .beta-notice.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .beta-notice-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: #888;
+      flex-shrink: 0;
+      animation: betaPulse 2s ease-in-out infinite;
+    }
+    @keyframes betaPulse {
+      0%,100% { opacity: 0.4; }
+      50%      { opacity: 1; }
+    }
+
     /* scrollbar */
     #chat::-webkit-scrollbar { width: 4px; }
     #chat::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
@@ -1678,6 +1706,10 @@
         <button id="doc-badge-remove" title="Remove document">&times;</button>
       </div>
       <div class="footer-hint">Try "Stripe vs Braintree vs Adyen comparison" · "Draft an email about Anthropic's Series E" · "PDF report on Tesla" · Ctrl+Enter to send</div>
+      <div class="beta-notice" id="beta-notice">
+        <span class="beta-notice-dot"></span>
+        Testing is still in progress — please bear with us if a query doesn't perform as expected.
+      </div>
     </footer>
   </div>
 
@@ -3370,6 +3402,13 @@
   sendBtn.addEventListener("click", submit);
   inputEl.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) submit();
+  });
+
+  // Beta notice: show while user is focused on the input, hide when they leave.
+  const betaNotice = document.getElementById("beta-notice");
+  inputEl.addEventListener("focus", () => betaNotice.classList.add("visible"));
+  inputEl.addEventListener("blur",  () => {
+    if (!inputEl.value.trim()) betaNotice.classList.remove("visible");
   });
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { inputEl.focus(); submit(); }

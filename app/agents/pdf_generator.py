@@ -401,7 +401,8 @@ def _generate_academic_pdf(state: dict) -> str:
 
     styles = _build_academic_styles()
     C = colors.HexColor
-    ts = datetime.utcnow().strftime("%B %Y")
+    from datetime import timezone as _tz
+    ts = datetime.now(_tz.utc).strftime("%B %Y")
     page_handler = _make_page_handler(title, ts)
 
     doc = SimpleDocTemplate(
@@ -551,7 +552,8 @@ def pdf_generator_node(state: AgentState) -> dict:
         title_text = query
     story.append(Paragraph(title_text, styles["cover_title"]))
 
-    ts = datetime.utcnow().strftime("%B %d, %Y")
+    from datetime import timezone as _tz
+    ts = datetime.now(_tz.utc).strftime("%B %d, %Y")
     story.append(Paragraph(f"Generated {ts}  ·  Multi-Agent AI Research",
                            styles["cover_sub"]))
     story.append(HRFlowable(width="100%", thickness=2,

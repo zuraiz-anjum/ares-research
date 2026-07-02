@@ -478,7 +478,9 @@ async def resume(request: Request, req: ResumeRequest) -> dict:
 
 
 @app.get("/history")
-async def history() -> dict:
+async def history(request: Request) -> dict:
+    if not _check_auth(request):
+        raise HTTPException(401, "Authentication required")
     return {"sessions": list(_history)}
 
 
@@ -856,9 +858,12 @@ async def create_share(request: Request, req: ShareRequest) -> dict:
     """Create a public shareable link for any generated report or chart."""
     if not _check_auth(request):
         raise HTTPException(401, "Authentication required")
-    # Resolve file path from the URL
+    # Resolve and jail file path to static/reports or static/charts only.
     rel = req.file_url.lstrip("/")
-    file_path = Path(rel)
+    file_path = Path(rel).resolve()
+    _allowed_roots = [Path("static/reports").resolve(), Path("static/charts").resolve()]
+    if not any(str(file_path).startswith(str(root)) for root in _allowed_roots):
+        raise HTTPException(400, "Only files in static/reports or static/charts can be shared")
     if not file_path.exists():
         raise HTTPException(404, "File not found")
     share_id = secrets.token_urlsafe(10)
@@ -1061,7 +1066,6 @@ async def errors_endpoint(
 
     hours = min(hours, 168)
     limit = min(limit, 200)
-    since = datetime.utcnow().replace(microsecond=0).isoformat()
 
     conditions = ["status = 'failed'", f"timestamp >= datetime('now', '-{hours} hours')"]
     params: list = []
@@ -1222,7 +1226,7 @@ async def _send_email(to: str, subject: str, body: str) -> None:
         msg["Subject"] = subject
         msg["From"]    = settings.smtp_from
         msg["To"]      = to
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         def _send():
             with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as s:
                 s.starttls()

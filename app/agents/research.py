@@ -83,7 +83,7 @@ def _get_queries(state: AgentState) -> list[str]:
 
 async def _fetch_one(query: str) -> tuple[list, int, list[dict]]:
     """Run a single Tavily search asynchronously using a thread executor."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, cached_search, query)
     srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
             for r in results if r.get("url")]
@@ -139,7 +139,7 @@ async def research_node(state: AgentState) -> dict:
     logger.info(f"sources_collected count={len(all_sources)}")
 
     llm = get_llm().with_structured_output(ResearchResult)
-    result: ResearchResult = llm.invoke(
+    result: ResearchResult = await llm.ainvoke(
         [
             SystemMessage(content=RESEARCH_SYSTEM_PROMPT),
             HumanMessage(content=f"User question: {original_question}\n\nSearch results:\n{raw_research}"),

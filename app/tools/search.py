@@ -4,7 +4,7 @@ The research agent uses this to gather news, financials and recent
 developments about a company.
 """
 
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, stop_after_delay, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
 from tavily import TavilyClient
 
 from app.config import settings
@@ -26,8 +26,18 @@ MOCK_RESULTS = [
 ]
 
 
+def _is_retriable(exc: Exception) -> bool:
+    """Only retry transient network/rate-limit errors, not auth or bad-request failures."""
+    msg = str(exc).lower()
+    # Never retry auth failures, invalid keys, or bad requests — they won't fix themselves.
+    non_retriable = ("401", "403", "invalid api key", "unauthorized", "400", "bad request")
+    if any(kw in msg for kw in non_retriable):
+        return False
+    return True
+
+
 @retry(
-    retry=retry_if_exception_type(Exception),
+    retry=retry_if_exception(_is_retriable),
     stop=(stop_after_attempt(3) | stop_after_delay(30)),
     wait=wait_exponential(multiplier=1, min=2, max=10),
     reraise=True,

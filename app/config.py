@@ -71,8 +71,21 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "ares@localhost"
 
+    # --- Persistent storage ---------------------------------------------------
+    # Set DATA_DIR to a Railway/Fly volume mount path (e.g. /app/data) so that
+    # SQLite databases, charts, and reports survive container restarts.
+    # Leave empty in local development — files are written to the working dir.
+    data_dir: str = ""
+
 
 settings = Settings()
+
+
+def _data_path(filename: str) -> str:
+    """Return an absolute path inside DATA_DIR (or cwd if not set)."""
+    import os
+    base = settings.data_dir.rstrip("/") if settings.data_dir else "."
+    return os.path.join(base, filename)
 
 
 def truncate_to_budget(text: str, label: str = "content") -> tuple[str, bool]:

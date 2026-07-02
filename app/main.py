@@ -37,7 +37,7 @@ from langgraph.errors import GraphInterrupt
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from app.config import settings, validate_settings
+from app.config import settings, validate_settings, _data_path
 import app.graph as _graph_mod
 from app.graph import build_graph
 from app.utils.checkpoint import set_thread_id, _TABLE_DDL, ANALYTICS_DB as _CP_ANALYTICS_DB
@@ -56,7 +56,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DB_PATH = "ares_history.db"
+DB_PATH = _data_path("ares_history.db")
 
 # In-memory mirror of the last 50 sessions — seeded from SQLite on startup.
 _history: deque = deque(maxlen=50)
@@ -153,7 +153,7 @@ async def _save_session(session: dict) -> None:
         await db.commit()
 
 
-CHECKPOINT_DB = "ares_checkpoints.db"
+CHECKPOINT_DB = _data_path("ares_checkpoints.db")
 
 
 UPLOADS_DIR = "uploads"

@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Pre-create runtime directories and warm the matplotlib font cache
-RUN mkdir -p static/charts static/reports static/shared uploads \
+# /app/data is the Railway persistent volume mount point (DATA_DIR env var)
+RUN mkdir -p static/charts static/reports static/shared uploads /app/data \
  && python -c "import matplotlib; matplotlib.font_manager._load_fontmanager(try_read_cache=False)" 2>/dev/null || true
 
 # Default port — override with PORT env var at runtime

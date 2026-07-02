@@ -6,6 +6,9 @@ development). See `.env.example` for the full list of supported variables.
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from pydantic import field_validator
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -15,6 +18,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     cerebras_api_key: str = ""
     tavily_api_key: str = ""
+
+    @field_validator(
+        "groq_api_key", "gemini_api_key", "openrouter_api_key",
+        "cerebras_api_key", "tavily_api_key", mode="before",
+    )
+    @classmethod
+    def _strip_key(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
 
     # --- Model selection ------------------------------------------------------
     # Auto-selected per provider in llm.py — override here if needed.

@@ -23,4 +23,4 @@ RUN mkdir -p static/charts static/reports static/shared uploads /app/data \
 EXPOSE 8000
 
 # Single worker keeps SQLite checkpoints safe; scale via Railway/Render replicas if needed
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"

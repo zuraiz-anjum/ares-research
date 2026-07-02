@@ -364,11 +364,20 @@ def _generate_academic_pdf(state: dict) -> str:
     story.append(HRFlowable(width="100%", thickness=0.5,
                             color=C("#aaaaaa"), spaceBefore=4, spaceAfter=10))
 
-    # ── Paper body (sections 1-5) ──────────────────────────────────────────
-    story.extend(_academic_md_to_flowables(report_text, styles))
+    # ── Split body from References section ────────────────────────────────
+    refs_match = re.search(r"^## Reference(?:s| List)?\s*$", report_text, re.IGNORECASE | re.MULTILINE)
+    if refs_match:
+        body_text = report_text[:refs_match.start()]
+        refs_text = report_text[refs_match.start():]
+    else:
+        body_text = report_text
+        refs_text = ""
 
-    # ── Charts (all figures from data_visualizer) ──────────────────────────
-    chart_urls = state.get("chart_urls") or []
+    story.extend(_academic_md_to_flowables(body_text, styles))
+
+    # ── Charts inserted before References ─────────────────────────────────
+    chart_urls   = state.get("chart_urls") or []
+    chart_titles = state.get("chart_titles") or []
     if not chart_urls:
         first = state.get("chart_url", "")
         if first:
@@ -377,18 +386,23 @@ def _generate_academic_pdf(state: dict) -> str:
         story.append(Spacer(1, 12))
         story.append(HRFlowable(width="100%", thickness=0.5,
                                 color=C("#cccccc"), spaceBefore=4, spaceAfter=8))
-        story.append(Paragraph("Data Visualisations", styles["h2"]))
+        story.append(Paragraph("Data Visualisations", styles["h1"]))
         for fig_num, curl in enumerate(chart_urls, 1):
             chart_path = curl.lstrip("/")
             if not os.path.exists(chart_path):
                 continue
+            caption_title = chart_titles[fig_num - 1] if fig_num - 1 < len(chart_titles) else f"Chart {fig_num}"
             story.append(Image(chart_path, width=5.8 * inch, height=3.1 * inch))
             story.append(Paragraph(
-                f"<i>Figure {fig_num}: Data visualisation for "
-                f"\"{_inline_md(query[:60])}\"</i>",
+                f"<i>Figure {fig_num}: {_inline_md(caption_title)}</i>",
                 styles["figure_caption"],
             ))
             story.append(Spacer(1, 8))
+
+    # ── References section ────────────────────────────────────────────────
+    if refs_text:
+        story.append(Spacer(1, 8))
+        story.extend(_academic_md_to_flowables(refs_text, styles))
 
     # ── Footer ────────────────────────────────────────────────────────────
     story.append(Spacer(1, 20))

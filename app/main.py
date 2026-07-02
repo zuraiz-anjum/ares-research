@@ -485,9 +485,9 @@ async def history() -> dict:
 # Graph nodes to surface as pipeline-step events in the SSE stream.
 _GRAPH_NODES = {
     "clarity", "intent_router", "planner", "decomposer", "research", "validator",
-    "doc_agent", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
+    "doc_agent", "data_extractor", "data_analyst", "comparison_matrix", "debate_writer", "synthesis",
     "challenger", "voting_synthesis", "dynamic_spawner", "report_writer", "draft_critic", "academic_writer", "pdf_generator",
-    "chart_writer", "code_writer", "email_drafter",
+    "chart_writer", "code_writer", "email_drafter", "data_visualizer", "survey_analyst",
     "fact_checker", "critic", "suggestions",
 }
 _STREAMING_NODES = {
@@ -500,10 +500,11 @@ _STREAMING_NODES = {
 @limiter.limit("20/minute")
 async def chat_stream(
     request: Request,
-    message: str,
+    message: str = "",
     thread_id: str | None = None,
     doc_id: str | None = None,
     is_survey: bool = False,
+    clarification: str | None = None,
 ) -> StreamingResponse:
     if not _check_auth(request):
         async def _deny():
@@ -516,11 +517,26 @@ async def chat_stream(
         def sse(data: dict) -> str:
             return f"data: {json.dumps(data)}\n\n"
 
-        if len(message) // 4 > settings.max_token_budget:
-            yield sse({"type": "error", "message": "Your query is too long. Please shorten it."})
-            return
+        # Clarification resume path: continue an interrupted graph with user's answer.
+        is_clarification = bool(clarification and thread_id)
+        if is_clarification:
+            inputs = Command(resume=clarification)
+        else:
+            if len(message) // 4 > settings.max_token_budget:
+                yield sse({"type": "error", "message": "Your query is too long. Please shorten it."})
+                return
+            inputs = {
+                "messages":          [HumanMessage(content=message)],
+                "attempts":          0,
+                "doc_id":            doc_id or "",
+                "is_survey":         is_survey,
+                "original_query":    message,
+                "revision_count":    0,
+                "revision_feedback": "",
+                "draft_score":       0,
+            }
 
-        if settings.mock_mode:
+        if settings.mock_mode and not is_clarification:
             for node in ("clarity", "decomposer", "research", "synthesis"):
                 yield sse({"type": "node_start", "node": node})
                 await asyncio.sleep(0.3)
@@ -533,24 +549,15 @@ async def chat_stream(
             yield sse({"type": "complete", "answer": mock, "thread_id": _thread_id, "sub_queries": [message]})
             return
 
-        inputs: dict = {
-            "messages":          [HumanMessage(content=message)],
-            "attempts":          0,
-            "doc_id":            doc_id or "",
-            "is_survey":         is_survey,
-            "original_query":    message,
-            "revision_count":    0,
-            "revision_feedback": "",
-            "draft_score":       0,
-        }
         config = {"configurable": {"thread_id": _thread_id}}
         set_thread_id(_thread_id)
 
-        # Cost budget guard — aborts before hitting the graph.
-        budget_err = await check_cost_budget(_thread_id, message, DB_PATH)
-        if budget_err:
-            yield sse({"type": "error", "message": budget_err["answer"]})
-            return
+        # Cost budget guard — only on fresh requests, not clarification resumes.
+        if not is_clarification:
+            budget_err = await check_cost_budget(_thread_id, message, DB_PATH)
+            if budget_err:
+                yield sse({"type": "error", "message": budget_err["answer"]})
+                return
 
         full_answer = ""
         sub_queries: list[str] = []

@@ -1,3 +1,4 @@
+
 """Data Visualizer agent.
 
 Generates 2-3 matplotlib charts from research data and saves them as PNGs.
@@ -32,13 +33,23 @@ _DARK = dict(
     bg="#0f0f1a", panel="#1a1a2e", text="#cccccc",
     palette='["#4C72B0","#DD8452","#55A868","#C44E52","#8172B3","#CCB974","#DA8BC3"]',
 )
+_LIGHT = dict(
+    bg="white", panel="#f5f7fa", text="#1a1a1a",
+    palette='["#2563eb","#dc2626","#16a34a","#d97706","#7c3aed","#0891b2","#db2777"]',
+)
 
-# ── Shared constants injected into every chart subprocess ─────────────────────
+# ── Theme constants injected into every chart subprocess ──────────────────────
 _DARK_SETUP = (
     f'BG      = "{_DARK["bg"]}"\n'
     f'PANEL   = "{_DARK["panel"]}"\n'
     f'TEXT    = "{_DARK["text"]}"\n'
     f'PALETTE = {_DARK["palette"]}\n'
+)
+_LIGHT_SETUP = (
+    f'BG      = "{_LIGHT["bg"]}"\n'
+    f'PANEL   = "{_LIGHT["panel"]}"\n'
+    f'TEXT    = "{_LIGHT["text"]}"\n'
+    f'PALETTE = {_LIGHT["palette"]}\n'
 )
 
 _CHART_RULES = """\
@@ -46,37 +57,38 @@ Each chart code block MUST:
   1. Start with: fig, ax = plt.subplots(figsize=(10, 5.5))
   2. Apply: fig.patch.set_facecolor(BG); ax.set_facecolor(PANEL)
   3. Set tick/label/title colours to TEXT
-  4. Give a clear title and axis labels
+  4. Give a clear, descriptive title and labelled axes
   5. NOT contain import statements (already provided)
   6. NOT call plt.savefig() or plt.show() (appended automatically)
-  7. Use only real data — no placeholders
+  7. Use only real data — no placeholders or example values
 
 Chart-type guide:
   bar / horizontal_bar — comparing discrete entities or time periods
   line                 — trends over consecutive time points
-  pie                  — proportions that sum to ~100 %
+  pie                  — proportions that sum to ~100 % (ONLY when there are 3+ entities)
   scatter              — correlation between two numeric variables
 
+IMPORTANT: Never produce a pie chart with fewer than 3 slices — use a bar chart instead.
 Fewer high-quality charts beat many mediocre ones."""
 
 # ── CSV-mode system prompt ─────────────────────────────────────────────────────
-CSV_VIZ_PROMPT = f"""You are a data visualisation expert.
+CSV_VIZ_PROMPT = f"""You are a data visualisation expert creating publication-quality charts.
 
 You receive structured DataFrames extracted from research findings. Write Python/
 matplotlib code to produce 2-3 distinct, insightful charts using these DataFrames.
 
-Dark-theme constants already defined for you: BG, PANEL, TEXT, PALETTE
+Theme constants already defined for you: BG, PANEL, TEXT, PALETTE
 DataFrames are pre-loaded as variables named after each table (snake_case).
 
 {_CHART_RULES}"""
 
 # ── Text-mode system prompt ────────────────────────────────────────────────────
-TEXT_VIZ_PROMPT = f"""You are a data visualisation expert.
+TEXT_VIZ_PROMPT = f"""You are a data visualisation expert creating publication-quality charts.
 
 Given research findings, extract all numerical data and write Python/matplotlib
 code to generate 2-3 meaningful, distinct charts.
 
-Dark-theme constants already defined: BG, PANEL, TEXT, PALETTE
+Theme constants already defined: BG, PANEL, TEXT, PALETTE
 
 {_CHART_RULES}"""
 
@@ -110,9 +122,11 @@ def _load_csv_tables(csv_path: str) -> dict[str, pd.DataFrame]:
             header = current_rows[0]
             data   = current_rows[1:]
             df = pd.DataFrame(data, columns=header)
-            # Coerce numeric columns
+            # Coerce numeric columns (errors='ignore' removed in pandas 2.x)
             for col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="ignore")
+                _tmp = pd.to_numeric(df[col], errors="coerce")
+                if _tmp.notna().all():
+                    df[col] = _tmp
             var_name = (
                 current_name.lower()
                 .replace(" ", "_")
@@ -146,13 +160,13 @@ def _load_csv_tables(csv_path: str) -> dict[str, pd.DataFrame]:
     return tables
 
 
-def _build_df_setup(tables: dict[str, pd.DataFrame]) -> tuple[str, str]:
+def _build_df_setup(tables: dict[str, pd.DataFrame], theme: str = _DARK_SETUP) -> tuple[str, str]:
     """Return (extra_setup_code, profile_text) for the chart subprocess and LLM prompt.
 
     Each DataFrame is embedded as inline JSON so the subprocess does not need
     to re-parse the multi-table CSV format.
     """
-    setup_lines = [_DARK_SETUP, "import pandas as pd, json"]
+    setup_lines = [theme, "import pandas as pd, json"]
     profile_parts: list[str] = []
 
     for var_name, df in tables.items():
@@ -162,7 +176,8 @@ def _build_df_setup(tables: dict[str, pd.DataFrame]) -> tuple[str, str]:
         )
         for col in df.select_dtypes(include="object").columns:
             setup_lines.append(
-                f"{var_name}[{col!r}] = pd.to_numeric({var_name}[{col!r}], errors='ignore')"
+                f"_tmp = pd.to_numeric({var_name}[{col!r}], errors='coerce'); "
+                f"{var_name}[{col!r}] = _tmp if _tmp.notna().all() else {var_name}[{col!r}]"
             )
         profile_parts.append(
             f"DataFrame '{var_name}':\n"
@@ -181,27 +196,30 @@ async def data_visualizer_node(state: AgentState) -> dict:
         return {
             "chart_urls": [],
             "chart_url": "",
+            "chart_titles": [],
             "messages": [AIMessage(content="(mock) data_visualizer skipped.")],
         }
 
-    query           = state.get("original_query", "")
-    csv_path        = state.get("extracted_csv_path", "") or ""
-    has_csv         = bool(csv_path and os.path.exists(csv_path))
+    query      = state.get("original_query", "")
+    csv_path   = state.get("extracted_csv_path", "") or ""
+    has_csv    = bool(csv_path and os.path.exists(csv_path))
+    mode       = state.get("mode", "")
+    theme      = _LIGHT_SETUP if mode in ("academic", "pdf", "report") else _DARK_SETUP
 
     if has_csv:
-        return await _run_csv_mode(state, query, csv_path)
+        return await _run_csv_mode(state, query, csv_path, theme)
     else:
-        return await _run_text_mode(state, query)
+        return await _run_text_mode(state, query, theme)
 
 
-async def _run_csv_mode(state: AgentState, query: str, csv_path: str) -> dict:
+async def _run_csv_mode(state: AgentState, query: str, csv_path: str, theme: str) -> dict:
     """Generate charts from the structured CSV produced by data_extractor."""
     tables = _load_csv_tables(csv_path)
     if not tables:
         logger.warning("data_visualizer csv_empty csv=%s", csv_path)
-        return await _run_text_mode(state, query)
+        return await _run_text_mode(state, query, theme)
 
-    extra_setup, profile_text = _build_df_setup(tables)
+    extra_setup, profile_text = _build_df_setup(tables, theme)
 
     df_list = "\n".join(
         f"  - '{name}': columns {list(df.columns)}" for name, df in tables.items()
@@ -221,7 +239,7 @@ async def _run_csv_mode(state: AgentState, query: str, csv_path: str) -> dict:
     return _execute_plan(plan, extra_setup, "csv")
 
 
-async def _run_text_mode(state: AgentState, query: str) -> dict:
+async def _run_text_mode(state: AgentState, query: str, theme: str) -> dict:
     """Fallback: extract numbers from report text and generate charts."""
     findings = (
         state.get("report_content")
@@ -232,9 +250,10 @@ async def _run_text_mode(state: AgentState, query: str) -> dict:
     if not findings.strip():
         logger.warning("data_visualizer no_findings")
         return {
-            "chart_urls": [],
-            "chart_url":  "",
-            "messages":   [AIMessage(content="No data found to visualise.")],
+            "chart_urls":   [],
+            "chart_url":    "",
+            "chart_titles": [],
+            "messages":     [AIMessage(content="No data found to visualise.")],
         }
 
     findings, _ = truncate_to_budget(findings, label="viz_findings")
@@ -245,17 +264,19 @@ async def _run_text_mode(state: AgentState, query: str) -> dict:
         HumanMessage(content=f"Research topic: {query}\n\nFindings:\n{findings}"),
     ])
 
-    return _execute_plan(plan, _DARK_SETUP, "text")
+    return _execute_plan(plan, theme, "text")
 
 
 def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:
     chart_urls:   list[str] = []
+    chart_titles: list[str] = []
     figure_lines: list[str] = []
 
     for i, chart in enumerate(plan.charts, 1):
         url = run_chart_code(chart.code, extra_setup=extra_setup)
         if url:
             chart_urls.append(url)
+            chart_titles.append(chart.title)
             figure_lines.append(
                 f"**Figure {i}: {chart.title}**\n_{chart.description}_"
             )
@@ -274,7 +295,8 @@ def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:
         summary += "\n\n" + "\n\n".join(figure_lines)
 
     return {
-        "chart_urls": chart_urls,
-        "chart_url":  chart_urls[0] if chart_urls else "",
-        "messages":   [AIMessage(content=summary)],
+        "chart_urls":   chart_urls,
+        "chart_url":    chart_urls[0] if chart_urls else "",
+        "chart_titles": chart_titles,
+        "messages":     [AIMessage(content=summary)],
     }

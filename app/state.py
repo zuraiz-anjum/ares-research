@@ -62,6 +62,7 @@ class AgentState(TypedDict, total=False):
     # Chart writer / data_visualizer output.
     chart_url: str         # public path to the primary PNG (backward compat)
     chart_urls: list       # list[str] — all PNGs from data_visualizer / survey_analyst
+    chart_titles: list     # list[str] — descriptive title for each chart (same order as chart_urls)
 
     # PDF generator output.
     pdf_url: str           # public path to the generated PDF

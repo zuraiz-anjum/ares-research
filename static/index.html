@@ -1708,12 +1708,11 @@
   // Pipeline configs per mode — defines which nodes appear and in what order.
   const PIPELINE_CONFIGS = {
     research:      ["clarity", "intent_router", "decomposer", "research", "voting_synthesis", "challenger", "fact_checker", "critic", "suggestions"],
-    report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "suggestions"],
-    pdf:           ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "pdf_generator", "suggestions"],
-    academic:      ["clarity", "intent_router", "decomposer", "research", "academic_writer", "data_visualizer", "pdf_generator", "suggestions"],
-    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_analyst", "data_visualizer", "suggestions"],
-    comparison:    ["clarity", "intent_router", "decomposer", "research", "comparison_matrix", "data_visualizer", "suggestions"],
-    report:        ["clarity", "intent_router", "decomposer", "research", "report_writer", "data_visualizer", "suggestions"],
+    report:        ["clarity", "intent_router", "decomposer", "research", "data_extractor", "report_writer", "draft_critic", "data_visualizer", "suggestions"],
+    pdf:           ["clarity", "intent_router", "decomposer", "research", "data_extractor", "report_writer", "draft_critic", "data_visualizer", "pdf_generator", "suggestions"],
+    academic:      ["clarity", "intent_router", "decomposer", "research", "data_extractor", "academic_writer", "draft_critic", "data_visualizer", "pdf_generator", "suggestions"],
+    data_analysis: ["clarity", "intent_router", "decomposer", "research", "data_extractor", "data_analyst", "data_visualizer", "suggestions"],
+    comparison:    ["clarity", "intent_router", "decomposer", "research", "data_extractor", "comparison_matrix", "data_visualizer", "suggestions"],
     survey:        ["clarity", "intent_router", "survey_analyst", "suggestions"],
     debate:        ["clarity", "intent_router", "decomposer", "research", "debate_writer", "suggestions"],
     email:         ["clarity", "intent_router", "decomposer", "research", "email_drafter", "suggestions"],
@@ -1732,6 +1731,8 @@
     debate_writer: "Debate", fact_checker: "Fact Check", planner: "Plan",
     chart_writer: "Chart", pdf_generator: "PDF",
     comparison_matrix: "Matrix", email_drafter: "Email",
+    data_extractor: "Extract", data_visualizer: "Visualise",
+    academic_writer: "Academic", survey_analyst: "Survey", challenger: "Debate",
   };
 
   // Streaming nodes — the ones whose LLM tokens go into the main bubble.
@@ -1750,9 +1751,16 @@
     validator:         { icon: "✅", desc: "Checks research quality" },
     doc_agent:         { icon: "📎", desc: "Fetches document" },
     synthesis:         { icon: "✍️",  desc: "Writes the answer" },
+    voting_synthesis:  { icon: "🗳️",  desc: "Multi-perspective voting" },
+    challenger:        { icon: "⚔️",  desc: "Challenges the findings" },
+    dynamic_spawner:   { icon: "🚀", desc: "Spawns specialist agents" },
     fact_checker:      { icon: "🔬", desc: "Verifies key claims" },
     critic:            { icon: "🧐", desc: "Critical peer review" },
     report_writer:     { icon: "📝", desc: "Drafts structured report" },
+    academic_writer:   { icon: "🎓", desc: "Writes academic paper" },
+    draft_critic:      { icon: "✏️",  desc: "Reviews & scores draft" },
+    data_extractor:    { icon: "🧮", desc: "Extracts quantitative data" },
+    data_visualizer:   { icon: "📊", desc: "Generates charts & graphs" },
     pdf_generator:     { icon: "📄", desc: "Exports to PDF" },
     chart_writer:      { icon: "📊", desc: "Renders chart" },
     data_analyst:      { icon: "📈", desc: "Analyses metrics & tables" },
@@ -1760,14 +1768,18 @@
     debate_writer:     { icon: "🥊", desc: "For vs Against analysis" },
     email_drafter:     { icon: "✉️",  desc: "Drafts professional email" },
     code_writer:       { icon: "💻", desc: "Writes & debugs code" },
+    survey_analyst:    { icon: "📋", desc: "Analyses survey data" },
     suggestions:       { icon: "💡", desc: "Follow-up questions" },
   };
 
   // ── Agent panel state ─────────────────────────────────────────────────
   let _agentTimers = {};       // node → Date.now() when it started
   let _activeAgentNode = null; // currently running node
+  let _idlePanelTimer = null;  // setTimeout handle for showIdlePanel — cancel on new run
 
   function buildAgentPanel(pipeline) {
+    // Cancel any pending idle-panel timer so a new run doesn't get wiped mid-flight.
+    if (_idlePanelTimer) { clearTimeout(_idlePanelTimer); _idlePanelTimer = null; }
     const container = document.getElementById("agent-cards");
     const runLabel = document.createElement("div");
     runLabel.className = "pipeline-run-label";
@@ -1872,8 +1884,8 @@
     const runLabel = document.getElementById("pipeline-run-label");
     if (runLabel) runLabel.textContent = "Pipeline complete";
 
-    // Return to idle view after a short pause.
-    setTimeout(showIdlePanel, 3500);
+    // Return to idle view after a short pause (stored so a new run can cancel it).
+    _idlePanelTimer = setTimeout(showIdlePanel, 3500);
   }
 
   function showIdlePanel() {
@@ -2365,16 +2377,111 @@
     showQuestion(0);
   }
 
-  async function submitClarification(text) {
-    showTyping("Researching…");
+  function submitClarification(text) {
     showPipeline();
-    try {
-      const data = await post("/resume", { thread_id: threadId, clarification: text });
-      handleJsonResponse(data);
-    } catch {
-      hideTyping(); donePipeline();
-      addMsg("Something went wrong. Please try again.", "error");
+    if (activeEs) { activeEs.close(); activeEs = null; }
+
+    const params = new URLSearchParams({ clarification: text, thread_id: threadId });
+    const es = new EventSource(`/chat/stream?${params}`);
+    activeEs = es;
+
+    let botGroup = null;
+    let botBubble = null;
+    let rawContent = "";
+    let pendingSrcs = [];
+
+    function finish() {
+      es.close();
+      activeEs = null;
+      sendBtn.disabled = false;
+      inputEl.focus();
     }
+
+    es.onmessage = (evt) => {
+      let data;
+      try { data = JSON.parse(evt.data); } catch { return; }
+
+      switch (data.type) {
+        case "node_start": {
+          advancePipelineToNode(data.node);
+          setAgentActive(data.node);
+          updatePipelineDiagramActive(data.node);
+          const nodeLabels = {
+            clarity: "Checking your question...", decomposer: "Breaking down the question...",
+            research: "Researching...", data_extractor: "Extracting data...",
+            academic_writer: null, report_writer: null,
+            data_visualizer: "Generating charts...", pdf_generator: "Building PDF...",
+            draft_critic: "Critiquing draft...", validator: "Validating research...",
+          };
+          if (STREAMING_NODES.has(data.node)) {
+            hideTyping();
+            ({ group: botGroup, bubble: botBubble } = createBotGroup());
+          } else if (nodeLabels[data.node]) {
+            updateTypingLabel(nodeLabels[data.node]);
+          }
+          break;
+        }
+        case "mode":   setMode(data.mode); break;
+        case "decomposed":
+          if (data.queries?.length > 1 && botGroup) appendSubQueries(botGroup, data.queries);
+          break;
+        case "token":
+          rawContent += data.content;
+          if (botBubble) botBubble.innerHTML = marked.parse(rawContent);
+          break;
+        case "sources": pendingSrcs = data.items || []; break;
+        case "chart": {
+          const urls = data.urls?.length ? data.urls : data.url ? [data.url] : [];
+          if (botGroup) urls.forEach(u => appendChart(botGroup, u));
+          break;
+        }
+        case "pdf_ready":
+          if (botGroup && data.url) appendPdfDownload(botGroup, data.url);
+          break;
+        case "complete":
+          hideTyping(); donePipeline();
+          threadId = data.thread_id;
+          if (!botGroup) {
+            const r = addMsg(data.answer || "(no answer)", "bot", data.sub_queries);
+            botGroup = r.group;
+          } else if (botBubble) {
+            botBubble.classList.remove("streaming-cursor");
+            botBubble.innerHTML = marked.parse(data.answer || rawContent);
+          }
+          if (botGroup) {
+            const allUrls = data.chart_urls?.length ? data.chart_urls : data.chart_url ? [data.chart_url] : [];
+            const existing = botGroup.querySelectorAll(".chart-section").length;
+            allUrls.slice(existing).forEach(u => appendChart(botGroup, u));
+            if (data.pdf_url && !botGroup.querySelector(".pdf-download")) appendPdfDownload(botGroup, data.pdf_url);
+            const srcs = pendingSrcs.length ? pendingSrcs : (data.sources || []);
+            if (srcs.length) appendSources(botGroup, srcs);
+            if (data.suggestions?.length) appendSuggestions(botGroup, data.suggestions);
+            appendActions(botGroup, data.answer || rawContent, data.pdf_url, data.chart_url, data.confidence_score ?? -1);
+          }
+          loadHistory();
+          finish();
+          break;
+        case "needs_clarification":
+          threadId = data.thread_id;
+          hideTyping(); donePipeline();
+          if (data.question_type === "mcq") renderMcqWidget(data.questions);
+          else { awaitingClarification = true; addMsg(data.question || data.questions, "clar"); inputEl.placeholder = "Type your answer and press Send…"; }
+          finish();
+          break;
+        case "error":
+          hideTyping(); donePipeline();
+          addMsg(data.message || "An error occurred.", "error");
+          finish();
+          break;
+      }
+    };
+
+    es.onerror = () => {
+      hideTyping(); donePipeline();
+      if (!botGroup) addMsg("Connection lost. Please try again.", "error");
+      else if (botBubble) botBubble.classList.remove("streaming-cursor");
+      finish();
+    };
   }
 
   function createBotGroup() {

@@ -857,23 +857,15 @@
       background: rgba(255,255,255,0.025);
       border: 1px solid rgba(255,255,255,0.06);
       border-radius: 6px;
-      opacity: 0;
-      transform: translateY(-4px);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      pointer-events: none;
-    }
-    .beta-notice.visible {
-      opacity: 1;
-      transform: translateY(0);
     }
     .beta-notice-dot {
       width: 5px; height: 5px; border-radius: 50%;
-      background: #888;
+      background: #777;
       flex-shrink: 0;
-      animation: betaPulse 2s ease-in-out infinite;
+      animation: betaPulse 2.5s ease-in-out infinite;
     }
     @keyframes betaPulse {
-      0%,100% { opacity: 0.4; }
+      0%,100% { opacity: 0.3; }
       50%      { opacity: 1; }
     }
 
@@ -3404,12 +3396,6 @@
     if (e.key === "Enter" && !e.shiftKey) submit();
   });
 
-  // Beta notice: show while user is focused on the input, hide when they leave.
-  const betaNotice = document.getElementById("beta-notice");
-  inputEl.addEventListener("focus", () => betaNotice.classList.add("visible"));
-  inputEl.addEventListener("blur",  () => {
-    if (!inputEl.value.trim()) betaNotice.classList.remove("visible");
-  });
   document.addEventListener("keydown", e => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { inputEl.focus(); submit(); }
   });

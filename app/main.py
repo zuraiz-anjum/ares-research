@@ -686,9 +686,24 @@ async def chat_stream(
                         full_answer += chunk.content
                         yield sse({"type": "token", "content": chunk.content})
 
-        except Exception:
-            logger.exception(f"stream_error thread={_thread_id}")
-            yield sse({"type": "error", "message": "An internal error occurred."})
+        except GraphInterrupt:
+            # The clarity node issued an interrupt (e.g. academic MCQ).
+            # astream_events propagated it instead of handling internally —
+            # fall through to the aget_state interrupt check below.
+            logger.info(f"graph_interrupt_propagated thread={_thread_id} — checking aget_state")
+        except Exception as _exc:
+            _msg = str(_exc)
+            # Give a specific message for rate-limit / quota exhaustion.
+            _rate_kws = ("rate limit", "429", "quota", "too many requests",
+                         "resource_exhausted", "tokens per day", "requests per day")
+            if any(kw in _msg.lower() for kw in _rate_kws):
+                logger.warning(f"stream_rate_limit thread={_thread_id}: {_msg[:120]}")
+                yield sse({"type": "error", "message":
+                    "All AI providers are currently rate-limited. "
+                    "Please wait a few minutes and try again, or try a shorter query."})
+            else:
+                logger.exception(f"stream_error thread={_thread_id}")
+                yield sse({"type": "error", "message": "An internal error occurred."})
             return
 
         # Check for a pending interrupt (clarification request).

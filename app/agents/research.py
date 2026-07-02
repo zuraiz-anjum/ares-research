@@ -81,10 +81,18 @@ def _get_queries(state: AgentState) -> list[str]:
     return [f"{question} {clarification}".strip() if clarification else question]
 
 
+def _to_search_query(query: str) -> str:
+    """Strip clarity's paper-requirements block and cap at Tavily's 400-char limit."""
+    sep = query.find("--- Paper requirements")
+    if sep > 0:
+        query = query[:sep].strip()
+    return query[:400]
+
+
 async def _fetch_one(query: str) -> tuple[list, int, list[dict]]:
     """Run a single Tavily search asynchronously using a thread executor."""
     loop = asyncio.get_running_loop()
-    results = await loop.run_in_executor(None, cached_search, query)
+    results = await loop.run_in_executor(None, cached_search, _to_search_query(query))
     srcs = [{"title": r.get("title", ""), "url": r.get("url", "")}
             for r in results if r.get("url")]
     return results, len(results), srcs

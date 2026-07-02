@@ -21,6 +21,37 @@ from app.utils.search_cache import cached_search
 
 logger = logging.getLogger(__name__)
 
+# Ordered credibility tiers — higher score = higher priority in citation list.
+_TRUSTED_HIGH = {"reuters.com", "bloomberg.com", "ft.com", "wsj.com", "nytimes.com",
+                 "economist.com", "sec.gov", "crunchbase.com", "pitchbook.com"}
+_TRUSTED_MED  = {"techcrunch.com", "wired.com", "arstechnica.com", "theverge.com",
+                 "cnbc.com", "forbes.com", "businessinsider.com", "theguardian.com",
+                 "bbc.com", "bbc.co.uk"}
+_UNTRUSTED    = {"reddit.com", "quora.com", "twitter.com", "x.com", "facebook.com",
+                 "pinterest.com", "tiktok.com"}
+
+
+def _credibility_score(url: str) -> int:
+    """Return 0-10 credibility score for a source URL."""
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower().removeprefix("www.")
+    except Exception:
+        return 5
+    if any(domain == d or domain.endswith("." + d) for d in _UNTRUSTED):
+        return 1
+    if domain.endswith((".gov", ".edu", ".ac.uk")):
+        return 10
+    if any(domain == d or domain.endswith("." + d) for d in _TRUSTED_HIGH):
+        return 9
+    if any(domain == d or domain.endswith("." + d) for d in _TRUSTED_MED):
+        return 7
+    # Official company IR/investor pages get a bump
+    if any(seg in url for seg in ("/investor", "/ir/", "/press", "/newsroom")):
+        return 8
+    return 5
+
+
 RESEARCH_SYSTEM_PROMPT = """You are the Research Agent in an AI research workspace.
 Summarise the web search results below to answer the user's question.
 
@@ -75,17 +106,20 @@ async def research_node(state: AgentState) -> dict:
 
     result_counts = [r[1] for r in fetch_results]
 
-    # Deduplicate sources and assign sequential citation numbers [1], [2], …
-    all_sources: list[dict] = []
+    # Collect and deduplicate sources, then rank by credibility so the most
+    # authoritative sources get the lowest citation numbers ([1], [2], …).
     seen_urls: set[str] = set()
-    url_to_num: dict[str, int] = {}
+    raw_sources: list[dict] = []
     for _, _, srcs in fetch_results:
         for s in srcs:
             if s["url"] not in seen_urls:
-                num = len(all_sources) + 1
-                all_sources.append(s)
+                raw_sources.append(s)
                 seen_urls.add(s["url"])
-                url_to_num[s["url"]] = num
+
+    raw_sources.sort(key=lambda s: _credibility_score(s["url"]), reverse=True)
+
+    all_sources: list[dict] = raw_sources
+    url_to_num: dict[str, int] = {s["url"]: i + 1 for i, s in enumerate(all_sources)}
 
     # Build per-query blocks with inline citation numbers so the summariser
     # and downstream agents can reference sources as [n].

@@ -68,6 +68,11 @@ Chart-type guide:
   pie                  — proportions that sum to ~100 % (ONLY when there are 3+ entities)
   scatter              — correlation between two numeric variables
 
+Value labels:
+  - bar charts:  bars = ax.bar(...); ax.bar_label(bars, fmt='%.1f', padding=3, color=TEXT)
+  - hbar charts: bars = ax.barh(...); ax.bar_label(bars, fmt='%.1f', padding=3, color=TEXT)
+  - line charts: annotate the last data point with the value
+
 IMPORTANT: Never produce a pie chart with fewer than 3 slices — use a bar chart instead.
 Fewer high-quality charts beat many mediocre ones."""
 

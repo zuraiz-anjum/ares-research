@@ -296,6 +296,83 @@ def _academic_md_to_flowables(text: str, styles: dict) -> list:
     return flowables
 
 
+def _make_page_handler(title: str, date_str: str):
+    """Return a canvas-level callback that stamps running header + page number."""
+    from reportlab.lib import colors
+    from reportlab.lib.units import cm
+
+    C = colors.HexColor
+
+    def _handler(canvas, doc):
+        canvas.saveState()
+        w, h = doc.pagesize
+
+        # Running header — skip on title/TOC page (page 1)
+        if doc.page > 1:
+            y_rule = h - 1.6 * cm
+            canvas.setStrokeColor(C("#bbbbbb"))
+            canvas.setLineWidth(0.4)
+            canvas.line(doc.leftMargin, y_rule, w - doc.rightMargin, y_rule)
+            display = (title[:68] + "…") if len(title) > 68 else title
+            canvas.setFont("Times-Italic", 8)
+            canvas.setFillColor(C("#666666"))
+            canvas.drawString(doc.leftMargin, y_rule + 3, display)
+            canvas.setFont("Times-Roman", 8)
+            canvas.drawRightString(w - doc.rightMargin, y_rule + 3, str(doc.page))
+
+        # Footer on every page
+        y_foot = 1.4 * cm
+        canvas.setStrokeColor(C("#cccccc"))
+        canvas.setLineWidth(0.4)
+        canvas.line(doc.leftMargin, y_foot, w - doc.rightMargin, y_foot)
+        canvas.setFont("Times-Roman", 7.5)
+        canvas.setFillColor(C("#aaaaaa"))
+        canvas.drawCentredString(
+            w / 2, y_foot - 0.38 * cm,
+            f"Ares · Autonomous Research & Evidence System · {date_str}",
+        )
+        canvas.restoreState()
+
+    return _handler
+
+
+def _build_toc(report_text: str, styles: dict) -> list:
+    """Scan ## / ### headings and return a simple Table of Contents flowable list."""
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import HRFlowable, Paragraph, Spacer
+
+    C = colors.HexColor
+    toc_h1 = ParagraphStyle("toc_h1",
+        fontName="Times-Roman", fontSize=10.5, leading=17,
+        textColor=C("#111111"), spaceAfter=2)
+    toc_h2 = ParagraphStyle("toc_h2",
+        fontName="Times-Roman", fontSize=9.5, leading=15,
+        leftIndent=22, textColor=C("#444444"), spaceAfter=1)
+
+    entries = []
+    for line in report_text.splitlines():
+        s = line.strip()
+        if s.startswith("### "):
+            entries.append((2, s[4:].strip()))
+        elif s.startswith("## "):
+            entries.append((1, s[3:].strip()))
+
+    if not entries:
+        return []
+
+    flowables: list = [
+        Paragraph("TABLE OF CONTENTS", styles["abstract_label"]),
+        Spacer(1, 8),
+    ]
+    for level, heading in entries:
+        sty = toc_h1 if level == 1 else toc_h2
+        flowables.append(Paragraph(_inline_md(heading), sty))
+    flowables.append(HRFlowable(width="100%", thickness=0.4,
+                                color=C("#cccccc"), spaceBefore=10, spaceAfter=0))
+    return flowables
+
+
 def _generate_academic_pdf(state: dict) -> str:
     """Render an academic-style PDF. Returns the file path."""
     from reportlab.lib import colors
@@ -324,22 +401,24 @@ def _generate_academic_pdf(state: dict) -> str:
 
     styles = _build_academic_styles()
     C = colors.HexColor
+    ts = datetime.utcnow().strftime("%B %Y")
+    page_handler = _make_page_handler(title, ts)
 
     doc = SimpleDocTemplate(
         filepath, pagesize=A4,
         leftMargin=2.8*cm, rightMargin=2.8*cm,
-        topMargin=3.0*cm,  bottomMargin=3.0*cm,
+        topMargin=3.2*cm,  bottomMargin=3.0*cm,
         title=title,
         author="Ares — Autonomous Research & Evidence System",
     )
 
     story = []
 
+    from reportlab.platypus import PageBreak
+
     # ── Title block ────────────────────────────────────────────────────────
     story.append(Paragraph(_inline_md(title), styles["paper_title"]))
     story.append(Spacer(1, 4))
-
-    ts = datetime.utcnow().strftime("%B %Y")
     story.append(Paragraph(
         f"Ares Research System  ·  Generated {ts}",
         styles["paper_authors"],
@@ -363,6 +442,12 @@ def _generate_academic_pdf(state: dict) -> str:
 
     story.append(HRFlowable(width="100%", thickness=0.5,
                             color=C("#aaaaaa"), spaceBefore=4, spaceAfter=10))
+
+    # ── Table of Contents ──────────────────────────────────────────────────
+    toc_flowables = _build_toc(report_text, styles)
+    if toc_flowables:
+        story.extend(toc_flowables)
+        story.append(PageBreak())
 
     # ── Split body from References section ────────────────────────────────
     refs_match = re.search(r"^## Reference(?:s| List)?\s*$", report_text, re.IGNORECASE | re.MULTILINE)
@@ -404,16 +489,8 @@ def _generate_academic_pdf(state: dict) -> str:
         story.append(Spacer(1, 8))
         story.extend(_academic_md_to_flowables(refs_text, styles))
 
-    # ── Footer ────────────────────────────────────────────────────────────
-    story.append(Spacer(1, 20))
-    story.append(HRFlowable(width="100%", thickness=0.5,
-                            color=C("#cccccc"), spaceAfter=6))
-    story.append(Paragraph(
-        "Generated by Ares · Autonomous Research &amp; Evidence System",
-        styles["footer"],
-    ))
-
-    doc.build(story)
+    # Footer is rendered by the page handler (not a flowable).
+    doc.build(story, onFirstPage=page_handler, onLaterPages=page_handler)
     return filepath
 
 

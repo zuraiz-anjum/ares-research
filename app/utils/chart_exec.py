@@ -45,10 +45,25 @@ import sys
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+try:
+    import seaborn as _sns
+except ImportError:
+    _sns = None
 
 {extra_setup}
+
+# Apply seaborn theme after extra_setup (which sets BG/PANEL/TEXT/PALETTE)
+if _sns is not None:
+    try:
+        _style = "whitegrid" if BG in ("white", "#ffffff", "#FFFFFF") else "darkgrid"
+        _sns.set_theme(style=_style, font_scale=1.05,
+                       rc={{"axes.spines.right": False, "axes.spines.top": False,
+                            "font.family": "DejaVu Sans"}})
+    except Exception:
+        pass
 
 try:
 {indented_code}

@@ -424,6 +424,15 @@
       font-size: 11px;
     }
 
+    /* ── Live word count badge ──────────── */
+    .word-count-badge {
+      font-size: 11px; color: #888; margin: 6px 0 4px;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .wc-text { font-variant-numeric: tabular-nums; }
+    .wc-bar { height: 3px; background: #2a2a2a; border-radius: 2px; overflow: hidden; }
+    .wc-fill { height: 100%; background: #4C72B0; border-radius: 2px; transition: width 0.3s; }
+
     /* ── Revision badge ─────────────────── */
     .revision-badge {
       font-size: 11.5px;
@@ -1022,6 +1031,12 @@
       transition: opacity 0.15s, transform 0.15s;
     }
     .pdf-download:hover { opacity: 0.88; transform: translateY(-1px); }
+    .pdf-download-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .pdf-preview-frame {
+      width: 100%; height: 520px;
+      border: 1px solid #2a2a2a; border-radius: 8px;
+      background: white; margin-top: 4px;
+    }
 
     /* ── Confidence badge ──────────────────────────── */
     .confidence-badge {
@@ -2389,6 +2404,7 @@
     let botBubble = null;
     let rawContent = "";
     let pendingSrcs = [];
+    let wordCountEl = null;
 
     function finish() {
       es.close();
@@ -2416,6 +2432,13 @@
           if (STREAMING_NODES.has(data.node)) {
             hideTyping();
             ({ group: botGroup, bubble: botBubble } = createBotGroup());
+            // Live word count badge for long-form writing modes
+            if (currentMode === "academic" || currentMode === "pdf" || currentMode === "report") {
+              wordCountEl = document.createElement("div");
+              wordCountEl.className = "word-count-badge";
+              wordCountEl.textContent = "Writing…";
+              botGroup.insertBefore(wordCountEl, botBubble);
+            }
           } else if (nodeLabels[data.node]) {
             updateTypingLabel(nodeLabels[data.node]);
           }
@@ -2428,8 +2451,35 @@
         case "token":
           rawContent += data.content;
           if (botBubble) botBubble.innerHTML = marked.parse(rawContent);
+          if (wordCountEl) {
+            const wc = rawContent.trim().split(/\s+/).filter(Boolean).length;
+            const target = currentMode === "academic" ? 3500 : 1500;
+            const pct = Math.min(100, Math.round(wc / target * 100));
+            wordCountEl.innerHTML = `<span class="wc-text">${wc.toLocaleString()} / ${target.toLocaleString()} words</span><div class="wc-bar"><div class="wc-fill" style="width:${pct}%"></div></div>`;
+          }
           break;
         case "sources": pendingSrcs = data.items || []; break;
+        case "revision":
+          if (botGroup) {
+            const rb = document.createElement("div");
+            rb.className = "revision-badge";
+            rb.innerHTML = `↺ Revision ${data.round} requested (score ${data.score}/10) — improving draft…`;
+            botGroup.appendChild(rb);
+            // Reset word count for the new draft pass
+            rawContent = ""; wordCountEl = null;
+            botBubble = null;
+            ({ group: botGroup, bubble: botBubble } = createBotGroup());
+          }
+          break;
+        case "draft_accepted":
+          if (botGroup) {
+            if (wordCountEl) { wordCountEl.remove(); wordCountEl = null; }
+            const ab = document.createElement("div");
+            ab.className = "revision-badge accepted";
+            ab.innerHTML = `✓ Draft accepted — score ${data.score}/10`;
+            botGroup.appendChild(ab);
+          }
+          break;
         case "chart": {
           const urls = data.urls?.length ? data.urls : data.url ? [data.url] : [];
           if (botGroup) urls.forEach(u => appendChart(botGroup, u));
@@ -2549,13 +2599,26 @@
 
   function appendPdfDownload(group, url) {
     if (!url) return;
+    const wrap = document.createElement("div");
+    wrap.className = "pdf-download-wrap";
+
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";
     a.download = "";
     a.className = "pdf-download";
     a.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg> Download PDF Report`;
-    group.appendChild(a);
+    wrap.appendChild(a);
+
+    // Inline preview iframe
+    const iframe = document.createElement("iframe");
+    iframe.src = url;
+    iframe.className = "pdf-preview-frame";
+    iframe.title = "PDF Preview";
+    iframe.setAttribute("loading", "lazy");
+    wrap.appendChild(iframe);
+
+    group.appendChild(wrap);
   }
 
   function setTelemetry(t) {
@@ -2699,6 +2762,7 @@
         const badge = document.createElement("span");
         badge.className = `confidence-badge ${cls}`;
         badge.textContent = `${confidenceScore}/10 · ${text}`;
+        badge.title = `Research confidence score ${confidenceScore}/10 (${text}).\nBased on source coverage, result count, and query match quality.\nHigh ≥ 7 · Medium 4-6 · Low ≤ 3`;
         lbl.appendChild(badge);
       }
     }
@@ -2820,6 +2884,7 @@
     const badge = document.createElement("span");
     badge.className = `confidence-badge ${cls}`;
     badge.textContent = `Confidence ${score}/10 · ${text}`;
+    badge.title = `Research confidence score ${score}/10 (${text}).\nBased on source coverage, result count, and query match quality.\nHigh ≥ 7 · Medium 4-6 · Low ≤ 3`;
     label.appendChild(badge);
   }
 
@@ -2915,6 +2980,7 @@
     let botBubble = null;
     let rawContent = "";
     let pendingSubQueries = null;
+    let wordCountEl = null;
 
     const params = new URLSearchParams({ message: text });
     if (threadId) params.set("thread_id", threadId);
@@ -2975,6 +3041,13 @@
               appendSubQueries(botGroup, pendingSubQueries);
               pendingSubQueries = null;
             }
+            // Live word count badge for long-form writing modes
+            if (currentMode === "academic" || currentMode === "pdf" || currentMode === "report") {
+              wordCountEl = document.createElement("div");
+              wordCountEl.className = "word-count-badge";
+              wordCountEl.textContent = "Writing…";
+              botGroup.insertBefore(wordCountEl, botBubble);
+            }
           } else if (data.node === "critic" && botGroup) {
             const spinner = document.createElement("div");
             spinner.className = "typing critique-spinner";
@@ -3006,6 +3079,12 @@
             rawContent += data.content;
             botBubble.innerHTML = marked.parse(rawContent);
             chatEl.scrollTop = chatEl.scrollHeight;
+            if (wordCountEl) {
+              const wc = rawContent.trim().split(/\s+/).filter(Boolean).length;
+              const target = currentMode === "academic" ? 3500 : 1500;
+              const pct = Math.min(100, Math.round(wc / target * 100));
+              wordCountEl.innerHTML = `<span class="wc-text">${wc.toLocaleString()} / ${target.toLocaleString()} words</span><div class="wc-bar"><div class="wc-fill" style="width:${pct}%"></div></div>`;
+            }
           }
           break;
         }
@@ -3081,6 +3160,7 @@
 
         case "draft_accepted": {
           if (botGroup) {
+            if (wordCountEl) { wordCountEl.remove(); wordCountEl = null; }
             const badge = document.createElement("div");
             badge.className = "revision-badge accepted";
             badge.innerHTML = `✓ Draft accepted — score ${data.score}/10`;

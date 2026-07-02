@@ -99,9 +99,10 @@ End with a forward-looking closing statement.]
 ## References
 
 [Numbered reference list matching ALL inline citations used in the body. Every source cited
-must appear here. Format each entry on its own line:
-[1] Title. Author or Publication. Year. URL if available.
-Minimum 12 references.]
+must appear here. Use APA 7th edition format. Format each entry on its own line:
+[1] Author, A. B., & Author, C. D. (Year). Title of article. *Publication Name*. URL
+    For organisations with no named author: Organisation. (Year). Title. URL
+Minimum 12 references. Where a URL was provided in the source list, you MUST include it.]
 
 RULES — READ CAREFULLY:
 - MANDATORY: Each section must meet its word minimum. Count carefully. If you are short, expand.
@@ -217,15 +218,17 @@ async def academic_writer_node(state: AgentState) -> dict:
 
     findings, _ = truncate_to_budget(findings, label="academic_findings")
 
-    # Build a numbered source list to feed the LLM so it can generate
-    # correct [N] references without hallucinating URLs.
+    # Build a numbered source list with full URLs so the LLM can produce
+    # proper APA references including real URLs — not hallucinated ones.
     source_block = ""
     if sources:
-        lines = ["\n\nAvailable sources (use these for [N] citations):"]
+        lines = ["\n\nAvailable sources — use EXACTLY these for [N] inline citations and the References section:"]
         for i, s in enumerate(sources, 1):
-            title = s.get("title", "Untitled")
-            url   = s.get("url", "")
-            lines.append(f"[{i}] {title}  {url}")
+            src_title = s.get("title", "Untitled")
+            url       = s.get("url", "")
+            lines.append(f"[{i}] {src_title} | {url}")
+        lines.append("\nIMPORTANT: Every [N] citation in the body must have a matching entry in References.")
+        lines.append("In References, use the exact URL shown above for each entry.")
         source_block = "\n".join(lines)
 
     context = (

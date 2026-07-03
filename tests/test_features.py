@@ -342,7 +342,7 @@ class TestConfidenceScore:
 
         with patch("app.agents.research.tavily_search", return_value=mock_search_results), \
              patch("app.agents.research.get_llm") as mock_llm:
-            mock_llm.return_value.with_structured_output.return_value.invoke.return_value = mock_llm_response
+            mock_llm.return_value.with_structured_output.return_value.ainvoke = AsyncMock(return_value=mock_llm_response)
             result = asyncio.run(research_node({
                 "sub_queries": ["Stripe funding 2023"],
                 "original_query": "Stripe funding 2023",

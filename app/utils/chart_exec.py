@@ -10,6 +10,7 @@ has no network access restrictions beyond what the OS enforces, which is
 acceptable for a local research tool where the LLM is the trusted source.
 """
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -19,6 +20,24 @@ import uuid
 
 logger = logging.getLogger(__name__)
 CHARTS_DIR = "static/charts"
+
+# Cap concurrent chart subprocesses — each spawns a Python process with
+# matplotlib loaded (~80 MB RSS). 3 concurrent = safe on 512 MB containers.
+_CHART_SEM: asyncio.Semaphore | None = None
+
+
+def _get_sem() -> asyncio.Semaphore:
+    global _CHART_SEM
+    if _CHART_SEM is None:
+        _CHART_SEM = asyncio.Semaphore(3)
+    return _CHART_SEM
+
+
+async def run_chart_code_async(code: str, extra_setup: str = "") -> str:
+    """Async wrapper: runs chart in a thread pool under a concurrency cap."""
+    loop = asyncio.get_running_loop()
+    async with _get_sem():
+        return await loop.run_in_executor(None, run_chart_code, code, extra_setup)
 
 
 def run_chart_code(code: str, extra_setup: str = "") -> str:

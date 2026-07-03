@@ -13,6 +13,7 @@ Pipeline position:
   data_extractor → [writer] → draft_critic → data_visualizer → [pdf_generator | suggestions]
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 from app.config import settings, truncate_to_budget
 from app.llm import get_llm
 from app.state import AgentState
-from app.utils.chart_exec import run_chart_code
+from app.utils.chart_exec import run_chart_code_async
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +242,7 @@ async def _run_csv_mode(state: AgentState, query: str, csv_path: str, theme: str
             SystemMessage(content=CSV_VIZ_PROMPT),
             HumanMessage(content=user_prompt),
         ])
-        return _execute_plan(plan, extra_setup, "csv")
+        return await _execute_plan(plan, extra_setup, "csv")
     except Exception:
         logger.warning("data_visualizer csv_llm_failed — falling back to text mode", exc_info=True)
         return await _run_text_mode(state, query, theme)
@@ -275,19 +276,23 @@ async def _run_text_mode(state: AgentState, query: str, theme: str) -> dict:
             SystemMessage(content=TEXT_VIZ_PROMPT),
             HumanMessage(content=f"Research topic: {query}\n\nFindings:\n{findings}"),
         ])
-        return _execute_plan(plan, theme, "text")
+        return await _execute_plan(plan, theme, "text")
     except Exception:
         logger.warning("data_visualizer text_llm_failed", exc_info=True)
         return _EMPTY_VIZ
 
 
-def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:
+async def _execute_plan(plan: VizPlan, extra_setup: str, mode: str) -> dict:
     chart_urls:   list[str] = []
     chart_titles: list[str] = []
     figure_lines: list[str] = []
 
-    for i, chart in enumerate(plan.charts, 1):
-        url = run_chart_code(chart.code, extra_setup=extra_setup)
+    # Run all charts in parallel — each acquires the semaphore in chart_exec.
+    urls = await asyncio.gather(
+        *[run_chart_code_async(chart.code, extra_setup=extra_setup) for chart in plan.charts]
+    )
+
+    for i, (chart, url) in enumerate(zip(plan.charts, urls), 1):
         if url:
             chart_urls.append(url)
             chart_titles.append(chart.title)

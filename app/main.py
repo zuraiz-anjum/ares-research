@@ -163,6 +163,25 @@ _ALLOWED_IMAGE_EXTENSIONS  = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
+def _cleanup_old_files(*dirs: str, max_age_seconds: int = 86400) -> None:
+    """Delete files older than max_age_seconds (default 24 h) from dirs."""
+    cutoff = time.time() - max_age_seconds
+    total = 0
+    for d in dirs:
+        p = Path(d)
+        if not p.exists():
+            continue
+        for f in p.iterdir():
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                try:
+                    f.unlink()
+                    total += 1
+                except OSError:
+                    pass
+    if total:
+        logger.info("startup_cleanup deleted=%d old files", total)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     import os
@@ -170,6 +189,7 @@ async def lifespan(_: FastAPI):
     os.makedirs("static/reports", exist_ok=True)
     os.makedirs("static/shared", exist_ok=True)
     os.makedirs(UPLOADS_DIR, exist_ok=True)
+    _cleanup_old_files("static/charts", "static/reports", UPLOADS_DIR)
     await _init_db()
     await _init_analytics_db()
     validate_settings()

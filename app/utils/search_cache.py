@@ -39,9 +39,22 @@ CREATE TABLE IF NOT EXISTS search_cache_stats (
 """
 
 
+_last_prune: float = 0.0
+
+
 def _ensure_db() -> None:
+    global _last_prune
     with sqlite3.connect(_CACHE_DB) as db:
+        # WAL mode allows concurrent readers + one writer without "database is locked".
+        db.execute("PRAGMA journal_mode=WAL")
         db.executescript(_DDL)
+        now = time.time()
+        if now - _last_prune > 3600:
+            db.execute(
+                "DELETE FROM search_cache_stats WHERE timestamp < datetime('now', '-7 days')"
+            )
+            db.commit()
+            _last_prune = now
 
 
 def _query_hash(query: str) -> str:

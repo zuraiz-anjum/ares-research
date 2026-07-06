@@ -11,10 +11,18 @@ advances the global active index so every subsequent call in that process
 skips the exhausted provider — no manual intervention needed.
 """
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 
 from app.config import settings
+
+# How long to wait before giving the whole provider chain one bounded second
+# pass, once every provider has failed on the same call. Short on purpose —
+# this is a "give transient bursts a moment to clear" delay, not an attempt
+# to wait out a provider's full suggested retry-after (which can be 60s+).
+_EXHAUSTED_RETRY_DELAY_SECONDS = 3
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +142,11 @@ class _FallbackLLM:
     def __init__(self, providers: list[tuple[str, object]], start: int = 0):
         self._providers = providers
         self._idx = start
+        # Whether this instance has already used its one bounded retry of the
+        # full chain after every provider was exhausted. Reset per instance
+        # (a fresh _FallbackLLM is created per get_llm() / with_structured_output()
+        # call), so it's a one-shot budget per call chain, not global.
+        self._retried_full_chain = False
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -155,6 +168,27 @@ class _FallbackLLM:
         logger.error(f"all_providers_exhausted last={current_name}")
         return False
 
+    def _should_retry_exhausted(self, exc: Exception) -> bool:
+        """True once, the first time every provider has failed on a rate-limit.
+
+        Most free-tier 429s are short-lived (the providers themselves often
+        report a retry-after of well under a minute). Previously, once every
+        provider failed, the exception was raised immediately with no second
+        chance — turning a transient burst into a hard failure for the user.
+        This gives the whole chain one bounded extra pass after a short wait.
+        Not applied to _is_provider_bug() failures (structured-output quirks,
+        etc.) since those won't be fixed by waiting and retrying the same call.
+        """
+        if self._retried_full_chain or not _is_rate_limited(exc):
+            return False
+        self._retried_full_chain = True
+        return True
+
+    def _reset_for_retry(self) -> None:
+        global _active_idx
+        self._idx = 0
+        _active_idx = 0
+
     # ── Public interface ───────────────────────────────────────────────────────
 
     def invoke(self, *args, **kwargs):
@@ -164,6 +198,13 @@ class _FallbackLLM:
             except Exception as exc:
                 if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
                     continue
+                if self._should_retry_exhausted(exc):
+                    logger.warning(
+                        f"all_providers_exhausted_retrying_once delay={_EXHAUSTED_RETRY_DELAY_SECONDS}s"
+                    )
+                    time.sleep(_EXHAUSTED_RETRY_DELAY_SECONDS)
+                    self._reset_for_retry()
+                    continue
                 raise
 
     async def ainvoke(self, *args, **kwargs):
@@ -172,6 +213,13 @@ class _FallbackLLM:
                 return await self._llm().ainvoke(*args, **kwargs)
             except Exception as exc:
                 if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
+                    continue
+                if self._should_retry_exhausted(exc):
+                    logger.warning(
+                        f"all_providers_exhausted_retrying_once delay={_EXHAUSTED_RETRY_DELAY_SECONDS}s"
+                    )
+                    await asyncio.sleep(_EXHAUSTED_RETRY_DELAY_SECONDS)
+                    self._reset_for_retry()
                     continue
                 raise
 

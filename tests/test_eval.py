@@ -220,6 +220,47 @@ def test_full_graph_runs_in_mock_mode():
     assert result["messages"][-1].content
 
 
+def test_conversation_history_accumulates_across_turns():
+    """Regression test: AgentState.messages must use the add_messages reducer.
+
+    Previously this field had no reducer annotation, so LangGraph's default
+    "last write wins" merge silently replaced the entire checkpointed
+    transcript with just the current turn's message on every new turn —
+    every multi-turn conversation lost all memory after one message, in
+    every mode, not just an isolated clarity/routing glitch. Runs two turns
+    against the same thread_id and checks both that message count grows and
+    that turn 1's content survives into turn 2's state.
+    """
+    from langchain_core.messages import HumanMessage
+    from app.graph import build_graph
+
+    with patch.object(settings, "mock_mode", True):
+        g = build_graph()
+        config = {"configurable": {"thread_id": "history-accum-test"}}
+
+        result1 = asyncio.run(g.ainvoke(
+            {"messages": [HumanMessage(content="My favorite color is blue.")], "attempts": 0},
+            config,
+        ))
+        turn1_count = len(result1["messages"])
+        assert turn1_count >= 1
+
+        result2 = asyncio.run(g.ainvoke(
+            {"messages": [HumanMessage(content="What did I just tell you?")], "attempts": 0},
+            config,
+        ))
+
+    assert len(result2["messages"]) > turn1_count, (
+        "messages did not accumulate across turns — the add_messages reducer "
+        "on AgentState.messages may have been removed"
+    )
+    contents = [str(m.content) for m in result2["messages"]]
+    assert any("favorite color is blue" in c for c in contents), (
+        "turn 1's message was lost — conversation history is being "
+        "overwritten instead of appended"
+    )
+
+
 def test_mock_search_latency():
     """Mock search should complete well under 100ms — no network call."""
     from app.tools.search import tavily_search, MOCK_RESULTS

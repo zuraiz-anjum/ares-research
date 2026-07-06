@@ -24,6 +24,22 @@ from app.config import settings
 # to wait out a provider's full suggested retry-after (which can be 60s+).
 _EXHAUSTED_RETRY_DELAY_SECONDS = 3
 
+
+class AllProvidersExhaustedError(Exception):
+    """Raised when the whole fallback chain fails and at least one provider
+    along the way failed on a genuine rate-limit/quota error.
+
+    The *last* exception in the chain isn't always itself a rate limit — e.g.
+    Groq/Cerebras/Gemini can all be legitimately quota-exhausted, and then the
+    final fallback (OpenRouter) fails for an unrelated reason (a bad API key,
+    say), and that unrelated exception is what would otherwise be raised.
+    From the caller's perspective the useful fact is "every provider failed
+    and it was capacity-related for most of them" — this exception lets
+    main.py show a clear "today's free quota is used up" message instead of
+    a generic internal error, without hiding that the final failure might
+    also need its own separate fix (see its message for the real cause).
+    """
+
 logger = logging.getLogger(__name__)
 
 # Global index: which provider to start from. Advances automatically when
@@ -147,6 +163,11 @@ class _FallbackLLM:
         # (a fresh _FallbackLLM is created per get_llm() / with_structured_output()
         # call), so it's a one-shot budget per call chain, not global.
         self._retried_full_chain = False
+        # True if ANY provider failed on a genuine rate-limit/quota error
+        # during this call chain — even if the exception that ultimately gets
+        # raised (e.g. from the last, otherwise-broken fallback) isn't itself
+        # a rate limit. See AllProvidersExhaustedError.
+        self._saw_rate_limit = False
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -196,7 +217,9 @@ class _FallbackLLM:
             try:
                 return self._llm().invoke(*args, **kwargs)
             except Exception as exc:
-                if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
+                rate_limited = _is_rate_limited(exc)
+                self._saw_rate_limit = self._saw_rate_limit or rate_limited
+                if (rate_limited or _is_provider_bug(exc)) and self._advance(exc):
                     continue
                 if self._should_retry_exhausted(exc):
                     logger.warning(
@@ -205,6 +228,8 @@ class _FallbackLLM:
                     time.sleep(_EXHAUSTED_RETRY_DELAY_SECONDS)
                     self._reset_for_retry()
                     continue
+                if self._saw_rate_limit:
+                    raise AllProvidersExhaustedError(str(exc)) from exc
                 raise
 
     async def ainvoke(self, *args, **kwargs):
@@ -212,7 +237,9 @@ class _FallbackLLM:
             try:
                 return await self._llm().ainvoke(*args, **kwargs)
             except Exception as exc:
-                if (_is_rate_limited(exc) or _is_provider_bug(exc)) and self._advance(exc):
+                rate_limited = _is_rate_limited(exc)
+                self._saw_rate_limit = self._saw_rate_limit or rate_limited
+                if (rate_limited or _is_provider_bug(exc)) and self._advance(exc):
                     continue
                 if self._should_retry_exhausted(exc):
                     logger.warning(
@@ -221,6 +248,8 @@ class _FallbackLLM:
                     await asyncio.sleep(_EXHAUSTED_RETRY_DELAY_SECONDS)
                     self._reset_for_retry()
                     continue
+                if self._saw_rate_limit:
+                    raise AllProvidersExhaustedError(str(exc)) from exc
                 raise
 
     def with_structured_output(self, schema, **kwargs):

@@ -50,7 +50,16 @@ from app.utils.calibration import (
 )
 from app.utils.search_cache import cache_stats as _search_cache_stats
 from app.utils.background import spawn
-from app.llm import _is_rate_limited
+from app.llm import _is_rate_limited, AllProvidersExhaustedError
+
+
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """True if this failure means "the free-tier providers are out of
+    capacity" rather than an actual code bug — covers both a rate-limited
+    exception directly, and AllProvidersExhaustedError (raised by llm.py
+    when the chain saw a genuine rate limit even if the final exception
+    that got raised was something else, e.g. a broken fallback API key)."""
+    return isinstance(exc, AllProvidersExhaustedError) or _is_rate_limited(exc)
 
 # Shown instead of a generic error whenever every LLM provider in the fallback
 # chain (Groq/Cerebras/Gemini/OpenRouter) has failed on a rate-limit or quota
@@ -436,7 +445,7 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
         logger.info(f"clarification_needed thread={thread_id}")
         return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
     except Exception as exc:
-        if _is_rate_limited(exc):
+        if _is_quota_exhausted(exc):
             logger.warning(f"graph_quota_exhausted thread={thread_id}: {str(exc)[:120]}")
             return {"status": "error", "answer": _QUOTA_EXHAUSTED_MESSAGE, "thread_id": thread_id}
         logger.exception(f"graph_error thread={thread_id}")
@@ -830,12 +839,14 @@ async def chat_stream(
             # fall through to the aget_state interrupt check below.
             logger.info(f"graph_interrupt_propagated thread={_thread_id} — checking aget_state")
         except Exception as _exc:
-            # Give a specific message for rate-limit / quota exhaustion, using
-            # the same detection llm.py itself uses to decide when to fall
-            # back — so this only fires when every provider actually failed
-            # on a rate limit, not for an unrelated bug that happens to run
-            # out of retries.
-            if _is_rate_limited(_exc):
+            # Give a specific message for rate-limit / quota exhaustion. Covers
+            # both "the failing exception is itself a rate limit" and "the
+            # chain saw a rate limit earlier but the final fallback failed for
+            # an unrelated reason" (AllProvidersExhaustedError) — e.g. Groq/
+            # Cerebras/Gemini all genuinely quota-exhausted, then OpenRouter's
+            # own key turns out to be broken; that's still "quota reached" from
+            # the user's point of view, not an unrelated internal bug.
+            if _is_quota_exhausted(_exc):
                 logger.warning(f"stream_rate_limit thread={_thread_id}: {str(_exc)[:120]}")
                 yield sse({"type": "error", "message": _QUOTA_EXHAUSTED_MESSAGE})
             else:

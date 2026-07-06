@@ -50,6 +50,17 @@ from app.utils.calibration import (
 )
 from app.utils.search_cache import cache_stats as _search_cache_stats
 from app.utils.background import spawn
+from app.llm import _is_rate_limited
+
+# Shown instead of a generic error whenever every LLM provider in the fallback
+# chain (Groq/Cerebras/Gemini/OpenRouter) has failed on a rate-limit or quota
+# error — including after llm.py's own bounded retry. Distinct from a real
+# internal error so the user knows it's a capacity limit, not a code bug.
+_QUOTA_EXHAUSTED_MESSAGE = (
+    "Today's free API quota has been reached across all providers — this isn't "
+    "an error in Ares, just today's rate limit. Please try again in a few "
+    "minutes, or later today once quotas reset."
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -424,7 +435,10 @@ async def _run_async(inputs: dict | Command, thread_id: str) -> dict:
                     pass
         logger.info(f"clarification_needed thread={thread_id}")
         return {"status": "needs_clarification", "question": question, "thread_id": thread_id}
-    except Exception:
+    except Exception as exc:
+        if _is_rate_limited(exc):
+            logger.warning(f"graph_quota_exhausted thread={thread_id}: {str(exc)[:120]}")
+            return {"status": "error", "answer": _QUOTA_EXHAUSTED_MESSAGE, "thread_id": thread_id}
         logger.exception(f"graph_error thread={thread_id}")
         return {"status": "error", "answer": "An internal error occurred. Please try again.", "thread_id": thread_id}
 
@@ -816,15 +830,14 @@ async def chat_stream(
             # fall through to the aget_state interrupt check below.
             logger.info(f"graph_interrupt_propagated thread={_thread_id} — checking aget_state")
         except Exception as _exc:
-            _msg = str(_exc)
-            # Give a specific message for rate-limit / quota exhaustion.
-            _rate_kws = ("rate limit", "429", "quota", "too many requests",
-                         "resource_exhausted", "tokens per day", "requests per day")
-            if any(kw in _msg.lower() for kw in _rate_kws):
-                logger.warning(f"stream_rate_limit thread={_thread_id}: {_msg[:120]}")
-                yield sse({"type": "error", "message":
-                    "All AI providers are currently rate-limited. "
-                    "Please wait a few minutes and try again, or try a shorter query."})
+            # Give a specific message for rate-limit / quota exhaustion, using
+            # the same detection llm.py itself uses to decide when to fall
+            # back — so this only fires when every provider actually failed
+            # on a rate limit, not for an unrelated bug that happens to run
+            # out of retries.
+            if _is_rate_limited(_exc):
+                logger.warning(f"stream_rate_limit thread={_thread_id}: {str(_exc)[:120]}")
+                yield sse({"type": "error", "message": _QUOTA_EXHAUSTED_MESSAGE})
             else:
                 logger.exception(f"stream_error thread={_thread_id}")
                 yield sse({"type": "error", "message": "An internal error occurred."})

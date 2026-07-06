@@ -54,7 +54,8 @@ graph TD
     data_visualizer -->|other| suggestions
     pdf_generator --> suggestions
     survey_analyst --> suggestions
-    critic --> suggestions["💡 Suggestions\nUniversal terminal node"]
+    synthesis --> suggestions["💡 Suggestions\nUniversal terminal node"]
+    critic --> suggestions
     debate_writer --> suggestions
     email_drafter --> suggestions
     code_writer --> suggestions

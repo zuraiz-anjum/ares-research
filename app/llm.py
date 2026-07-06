@@ -12,14 +12,20 @@ skips the exhausted provider — no manual intervention needed.
 """
 
 import logging
+from datetime import datetime, timezone
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Global index: which provider to start from. Advances automatically when
-# a provider is rate-limited. Resets on server restart (next day).
+# a provider is rate-limited or errors out. Resets on server restart, and
+# also on UTC day-rollover (see _maybe_reset_active_idx) — otherwise a
+# provider that's still broken after its daily quota resets (or a dead
+# last-resort provider with nothing left to fall back to) would wedge every
+# request until someone manually restarts the process.
 _active_idx: int = 0
+_active_idx_date = None
 
 
 def _is_rate_limited(exc: Exception) -> bool:
@@ -29,6 +35,25 @@ def _is_rate_limited(exc: Exception) -> bool:
         "too many requests", "rate_limit_exceeded", "tokens per day",
         "limit: 0", "requests per day", "exceeded your current quota",
     ])
+
+
+def _maybe_reset_active_idx() -> None:
+    """Reset the fallback index when a new UTC day starts.
+
+    Rate limits like Groq's 100k-tokens/day reset daily, but `_active_idx`
+    previously only reset on process restart. If the chain had advanced past
+    a provider whose quota later recovered — or landed on a broken
+    last-resort provider (nothing left to fall back to) — every request
+    stayed broken until someone noticed and restarted the server manually.
+    Resetting on day-rollover bounds an outage to "at most a day" instead of
+    "until someone restarts it."
+    """
+    global _active_idx, _active_idx_date
+    today = datetime.now(timezone.utc).date()
+    if _active_idx != 0 and _active_idx_date != today:
+        logger.warning(f"active_idx_reset previous_idx={_active_idx} reason=new_utc_day")
+        _active_idx = 0
+    _active_idx_date = today
 
 
 def _is_provider_bug(exc: Exception) -> bool:
@@ -164,6 +189,7 @@ class _FallbackLLM:
 
 def get_llm(temperature: float | None = None, streaming: bool = False) -> _FallbackLLM:
     """Return a fallback-aware LLM starting from the current healthy provider."""
+    _maybe_reset_active_idx()
     temp = settings.llm_temperature if temperature is None else temperature
     providers = _build_llms(temp, streaming)
     if not providers:

@@ -1,6 +1,6 @@
 # Ares — Autonomous Research & Evidence System
 
-A production-grade **multi-agent research assistant** built with **LangGraph**, **FastAPI**, **ChromaDB RAG**, and **SSE streaming**. Ask a single question — Ares orchestrates 20 specialized agents, runs parallel web searches, validates findings, generates charts and PDFs, and streams the answer in real time.
+A production-grade **multi-agent research assistant** built with **LangGraph**, **FastAPI**, **ChromaDB RAG**, and **SSE streaming**. Ask a single question — Ares orchestrates 26 specialized agents across 14 pipeline modes, runs parallel web searches, fact-checks and critiques its own drafts, generates charts and PDFs, and streams the answer in real time.
 
 ---
 
@@ -8,42 +8,61 @@ A production-grade **multi-agent research assistant** built with **LangGraph**, 
 
 ```mermaid
 graph TD
-    START --> clarity["🎯 Clarity\nValidates question"]
-    clarity --> intent_router["🗺️ Intent Router\nSelects pipeline"]
+    START --> clarity["🎯 Clarity\nValidates question + resolves\nfollow-ups via conversation history"]
+    clarity --> intent_router["🗺️ Intent Router\nSelects 1 of 14 pipeline modes"]
 
-    intent_router -->|research / report / pdf / data / comparison / debate / email| decomposer["🔍 Decomposer\nBreaks into sub-queries"]
+    intent_router -->|research / report / pdf / data / comparison / debate / email / academic| decomposer["🔍 Decomposer\nBreaks into sub-queries"]
     intent_router -->|chat| synthesis
     intent_router -->|document| doc_agent["📎 Doc Agent\nRAG / URL fetch"]
     intent_router -->|plan| planner["📋 Planner\nStructures research"]
     intent_router -->|code| code_writer["💻 Code Writer"]
     intent_router -->|chart| chart_writer["📊 Chart Writer"]
+    intent_router -->|survey| survey_analyst["📐 Survey Analyst\nCSV/Excel analysis"]
 
     planner --> research
-    decomposer --> research["🌐 Research\nasyncio.gather × Tavily"]
+    decomposer --> research["🌐 Research\nParallel Tavily search (ThreadPoolExecutor)"]
     research -->|confidence ≥ threshold| route_out["Route by mode"]
     research -->|confidence < threshold| validator["✅ Validator"]
-    validator -->|sufficient| route_out
+    validator -->|sufficient / max attempts| route_out
     validator -->|insufficient + attempts left| research
 
     doc_agent --> synthesis
-    route_out -->|research / plan| synthesis["✍️ Synthesis\nStreaming LLM answer"]
-    route_out -->|report / pdf| report_writer["📝 Report Writer"]
-    route_out -->|comparison| comparison_matrix["⚖️ Comparison Matrix"]
-    route_out -->|data_analysis| data_analyst["📈 Data Analyst"]
+    route_out -->|research| voting_synthesis["🗳️ Voting Synthesis\n3 parallel perspectives + judge"]
+    route_out -->|plan| dynamic_spawner["⚡ Dynamic Spawner\nActivates specialist agents"]
+    route_out -->|report / pdf / data_analysis / comparison / academic| data_extractor["📥 Data Extractor\nPulls quantitative data"]
     route_out -->|debate| debate_writer["🥊 Debate Writer"]
     route_out -->|email| email_drafter["✉️ Email Drafter"]
 
-    synthesis --> fact_checker["🔬 Fact Checker"]
+    data_extractor -->|report / pdf| report_writer["📝 Report Writer"]
+    data_extractor -->|comparison| comparison_matrix["⚖️ Comparison Matrix"]
+    data_extractor -->|data_analysis| data_analyst["📈 Data Analyst"]
+    data_extractor -->|academic| academic_writer["🎓 Academic Writer\nAbstract, citations, References"]
+
+    voting_synthesis --> challenger["⚔️ Challenger\nAdversarial counter-evidence"]
+    dynamic_spawner --> challenger
+    challenger --> fact_checker["🔬 Fact Checker"]
     fact_checker --> critic["🧐 Critic"]
-    report_writer --> chart_writer
-    comparison_matrix --> chart_writer
-    data_analyst --> chart_writer
-    chart_writer -->|pdf mode| pdf_generator["📄 PDF Generator"]
-    chart_writer -->|other| suggestions
+
+    report_writer --> draft_critic["📐 Draft Critic\nScores + loops back for revision"]
+    comparison_matrix --> draft_critic
+    data_analyst --> draft_critic
+    academic_writer --> draft_critic
+    draft_critic -->|revise| report_writer
+    draft_critic -->|accepted| data_visualizer["📊 Data Visualizer\nMatplotlib charts"]
+
+    data_visualizer -->|pdf / academic| pdf_generator["📄 PDF Generator"]
+    data_visualizer -->|other| suggestions
     pdf_generator --> suggestions
-    critic --> suggestions["💡 Suggestions"]
+    survey_analyst --> suggestions
+    critic --> suggestions["💡 Suggestions\nUniversal terminal node"]
+    debate_writer --> suggestions
+    email_drafter --> suggestions
+    code_writer --> suggestions
+    chart_writer --> suggestions
     suggestions --> END
 ```
+
+*Simplified for readability — self-correction loops (draft revision, research retry) and exact edge conditions live in `app/graph.py`.*
 
 ---
 
@@ -51,13 +70,15 @@ graph TD
 
 | Category | What's included |
 |---|---|
-| **12 pipeline modes** | Research, Report, PDF, Data Analysis, Comparison, Debate, Email, Plan, Chat, Document, Code, Chart |
-| **20 LangGraph agents** | Each a typed node with structured output and confidence scoring |
-| **Multi-provider LLM** | Groq → Cerebras → Gemini → OpenRouter fallback chain with auto-advance on rate limits |
+| **14 pipeline modes** | Research, Report, PDF, Academic Paper, Data Analysis, Comparison, Debate, Email, Plan, Chat, Document, Code, Chart, Survey |
+| **26 LangGraph agents** | Each a typed node with structured output and confidence scoring |
+| **Self-correction** | Fact-checker verifies claims, critic scores drafts, draft-critic loop revises weak writing, challenger hunts adversarial counter-evidence |
+| **Voting synthesis** | Research answers: 3 independent LLM perspectives + a 4th judge that picks the strongest and explains why |
+| **Multi-provider LLM** | Groq → Cerebras → Gemini → OpenRouter fallback chain, auto-advances on rate limits, live "switching provider" status shown mid-request |
 | **RAG + reranking** | ChromaDB vector store + FlashRank cross-encoder; multi-file support |
 | **Image analysis** | Upload PNG/JPG → Gemini Vision describes it → stored as searchable RAG chunks |
-| **Streaming SSE** | 12 typed events: `node_start`, `token`, `mode`, `confidence`, `chart`, `pdf_ready`, `sources`, `complete`, … |
-| **Persistent memory** | SQLite checkpointer (LangGraph) + rolling conversation summary + cross-session entity memory |
+| **Streaming SSE** | Typed events: `node_start`, `token`, `mode`, `confidence`, `chart`, `pdf_ready`, `sources`, `provider_switch`, `complete`, … |
+| **Persistent memory** | SQLite checkpointer (LangGraph) with proper multi-turn message accumulation + rolling conversation summary + cross-session entity memory |
 | **Exports** | PDF (ReportLab), PPTX (python-pptx), shareable public links |
 | **Voice input** | Web Speech API mic button in the UI |
 | **Analytics** | `/dashboard` with Chart.js — daily volume, mode distribution, provider split, avg latency |
@@ -128,31 +149,39 @@ Access at http://localhost:8000. All SQLite databases and generated files are mo
 ```
 app/
   main.py              FastAPI app — all routes, SSE, auth, analytics
-  graph.py             LangGraph 20-node state machine
+  graph.py             LangGraph 26-node state machine
   state.py             AgentState TypedDict
   config.py            Pydantic settings (all env vars)
   llm.py               Multi-provider fallback LLM factory
   agents/
-    clarity.py         Question validation
-    intent_router.py   Pipeline mode selection
-    decomposer.py      Sub-query generation
-    research.py        asyncio.gather × Tavily search
-    validator.py       Research quality gate
-    synthesis.py       Streaming answer + entity memory
-    comparison_matrix.py
-    data_analyst.py
+    clarity.py           Question validation + history-aware follow-up resolution
+    intent_router.py     Pipeline mode selection (14 modes)
+    decomposer.py        Sub-query generation
+    research.py          Parallel Tavily search (ThreadPoolExecutor)
+    validator.py         Research quality gate
+    synthesis.py         Streaming answer + entity memory
+    voting_synthesis.py  3-perspective parallel synthesis + judge (research mode)
+    challenger.py        Adversarial counter-evidence search + reconciliation
+    fact_checker.py      Claim verification
+    critic.py            Research quality scoring
+    draft_critic.py      Writing quality scoring + revision loop
+    planner.py           Multi-step research plan (plan mode)
+    dynamic_spawner.py   Activates specialist agents (plan mode)
+    comparison_matrix.py Side-by-side entity comparison
+    data_analyst.py       Numeric/statistical breakdown
+    data_extractor.py    Pulls quantitative data before visual/writer nodes
+    data_visualizer.py   Matplotlib chart generation
+    survey_analyst.py    CSV/Excel survey analysis
+    academic_writer.py   Academic paper — Abstract, citations, References
     report_writer.py
-    pdf_generator.py   ReportLab PDF
-    pptx_generator.py  python-pptx PowerPoint
-    chart_writer.py    Matplotlib charts
-    doc_agent.py       RAG / URL fetch (multi-file)
+    pdf_generator.py     ReportLab PDF
+    pptx_generator.py    python-pptx PowerPoint
+    chart_writer.py      Matplotlib charts (chart mode)
+    doc_agent.py         RAG / URL fetch (multi-file)
     code_writer.py
     debate_writer.py
     email_drafter.py
-    fact_checker.py
-    critic.py
-    planner.py
-    suggestions.py
+    suggestions.py       Universal terminal node — proposes follow-ups
   rag/
     loader.py          PDF/DOCX/TXT chunker
     store.py           ChromaDB store + search_multi
@@ -184,6 +213,11 @@ docker-compose.yml
 | `GET` | `/history` | Session history |
 | `GET` | `/analytics` | Usage analytics JSON |
 | `GET` | `/dashboard` | Analytics dashboard UI |
+| `GET` | `/calibration` | Confidence-threshold calibration report |
+| `GET` | `/prompt-health` | Per-node quality metrics (draft scores, fact-check pass rate) |
+| `GET` | `/cost/{thread_id}` | Token/cost tracking for one thread |
+| `GET` | `/cost` | Global token/cost tracking |
+| `GET` | `/cache/stats` | Search-result cache stats |
 | `POST` | `/export/pptx` | Export report as PPTX |
 | `POST` | `/share` | Create shareable public link |
 | `GET` | `/r/{share_id}` | Access shared report (no auth) |
@@ -193,6 +227,8 @@ docker-compose.yml
 | `POST` | `/auth/logout` | Logout |
 | `GET` | `/auth/status` | Auth status |
 | `GET` | `/health` | Health check |
+| `GET` | `/diagnostics` | Ops/debugging: node-level checkpoint stats |
+| `GET` | `/errors` | Recent failed-node error log |
 
 ---
 

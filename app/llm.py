@@ -12,9 +12,11 @@ skips the exhausted provider — no manual intervention needed.
 """
 
 import asyncio
+import contextvars
 import logging
 import time
 from datetime import datetime, timezone
+from typing import Callable
 
 from app.config import settings
 
@@ -23,6 +25,34 @@ from app.config import settings
 # this is a "give transient bursts a moment to clear" delay, not an attempt
 # to wait out a provider's full suggested retry-after (which can be 60s+).
 _EXHAUSTED_RETRY_DELAY_SECONDS = 3
+
+_PROVIDER_DISPLAY_NAMES = {
+    "groq": "Groq", "cerebras": "Cerebras", "gemini": "Gemini", "openrouter": "OpenRouter",
+}
+
+# Lets the SSE stream handler (app/main.py) observe provider fallbacks as they
+# happen, so the frontend can show *why* a request is taking longer instead of
+# spinning silently. Scoped per-request via contextvars (same pattern as
+# app.utils.checkpoint's thread-id var) rather than a global, since multiple
+# streamed requests can be in flight concurrently.
+_fallback_sink: contextvars.ContextVar[Callable[[dict], None] | None] = contextvars.ContextVar(
+    "_fallback_sink", default=None
+)
+
+
+def set_fallback_sink(sink: Callable[[dict], None] | None) -> None:
+    """Register (or clear, with None) a callback for real-time fallback events
+    in the current async context."""
+    _fallback_sink.set(sink)
+
+
+def _emit_fallback_event(event: dict) -> None:
+    sink = _fallback_sink.get()
+    if sink is not None:
+        try:
+            sink(event)
+        except Exception:
+            pass
 
 
 class AllProvidersExhaustedError(Exception):
@@ -185,6 +215,12 @@ class _FallbackLLM:
                 f"provider_fallback from={current_name} to={next_name} "
                 f"reason={str(exc)[:60]}"
             )
+            current_label = _PROVIDER_DISPLAY_NAMES.get(current_name, current_name)
+            next_label = _PROVIDER_DISPLAY_NAMES.get(next_name, next_name)
+            _emit_fallback_event({
+                "type": "provider_switch",
+                "message": f"{current_label} is busy — switching to {next_label}...",
+            })
             return True
         logger.error(f"all_providers_exhausted last={current_name}")
         return False
@@ -203,6 +239,10 @@ class _FallbackLLM:
         if self._retried_full_chain or not _is_rate_limited(exc):
             return False
         self._retried_full_chain = True
+        _emit_fallback_event({
+            "type": "provider_retry",
+            "message": "All providers are busy right now — giving it one more try...",
+        })
         return True
 
     def _reset_for_retry(self) -> None:

@@ -50,7 +50,7 @@ from app.utils.calibration import (
 )
 from app.utils.search_cache import cache_stats as _search_cache_stats
 from app.utils.background import spawn
-from app.llm import _is_rate_limited, AllProvidersExhaustedError
+from app.llm import _is_rate_limited, AllProvidersExhaustedError, set_fallback_sink
 
 
 def _is_quota_exhausted(exc: Exception) -> bool:
@@ -727,8 +727,52 @@ async def chat_stream(
         challenger_found: bool | None = None
         t_start = time.monotonic()
 
+        # Provider fallbacks (e.g. Groq rate-limited -> Cerebras) happen deep
+        # inside node code, not in this generator, so they can't just be
+        # yielded inline. Route them through a queue that's merged with the
+        # graph's own event stream below — that way a switch mid-node still
+        # reaches the frontend immediately instead of only surfacing (or not)
+        # in the eventual answer, leaving the user guessing why it's slow.
+        _fallback_queue: asyncio.Queue = asyncio.Queue()
+        set_fallback_sink(lambda evt: _fallback_queue.put_nowait(evt))
+
+        async def _consume_graph_events(q: asyncio.Queue) -> None:
+            try:
+                async for event in _graph_mod.graph.astream_events(inputs, config, version="v2"):
+                    await q.put(("graph", event))
+            except GraphInterrupt:
+                await q.put(("interrupt", None))
+            except Exception as exc:
+                await q.put(("error", exc))
+            finally:
+                await q.put(("done", None))
+
+        _merged_queue: asyncio.Queue = asyncio.Queue()
+
+        async def _drain_fallbacks() -> None:
+            while True:
+                evt = await _fallback_queue.get()
+                await _merged_queue.put(("fallback", evt))
+
+        graph_task = asyncio.create_task(_consume_graph_events(_merged_queue))
+        fallback_task = asyncio.create_task(_drain_fallbacks())
+
         try:
-            async for event in _graph_mod.graph.astream_events(inputs, config, version="v2"):
+            while True:
+                kind, payload = await _merged_queue.get()
+
+                if kind == "fallback":
+                    yield sse(payload)
+                    continue
+                if kind == "done":
+                    break
+                if kind == "interrupt":
+                    logger.info(f"graph_interrupt_propagated thread={_thread_id} — checking aget_state")
+                    break
+                if kind == "error":
+                    raise payload
+
+                event = payload
                 kind = event["event"]
                 name = event.get("name", "")
                 meta = event.get("metadata", {})
@@ -833,11 +877,6 @@ async def chat_stream(
                         full_answer += chunk.content
                         yield sse({"type": "token", "content": chunk.content})
 
-        except GraphInterrupt:
-            # The clarity node issued an interrupt (e.g. academic MCQ).
-            # astream_events propagated it instead of handling internally —
-            # fall through to the aget_state interrupt check below.
-            logger.info(f"graph_interrupt_propagated thread={_thread_id} — checking aget_state")
         except Exception as _exc:
             # Give a specific message for rate-limit / quota exhaustion. Covers
             # both "the failing exception is itself a rate limit" and "the
@@ -853,6 +892,16 @@ async def chat_stream(
                 logger.exception(f"stream_error thread={_thread_id}")
                 yield sse({"type": "error", "message": "An internal error occurred."})
             return
+        finally:
+            # _drain_fallbacks() loops forever by design (there's no natural
+            # end-of-stream for fallback events) — must be cancelled explicitly
+            # or it leaks a task per request. graph_task normally finishes on
+            # its own (it always puts a "done"/"error"/"interrupt" sentinel),
+            # this is just a safety net for early-return paths above.
+            set_fallback_sink(None)
+            fallback_task.cancel()
+            if not graph_task.done():
+                graph_task.cancel()
 
         # Check for a pending interrupt (clarification request).
         try:

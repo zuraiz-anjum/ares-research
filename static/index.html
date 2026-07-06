@@ -380,6 +380,17 @@
       margin-top: 4px;
     }
 
+    /* ── Provider status badge ──────────── */
+    .provider-status-badge {
+      margin-top: 8px;
+      padding: 6px 11px;
+      background: var(--surface);
+      border: 1px dashed var(--border2);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
     /* ── Vote badge ─────────────────────── */
     .vote-badge {
       margin-top: 8px;
@@ -2469,6 +2480,16 @@
           break;
         }
         case "mode":   setMode(data.mode); break;
+        case "provider_switch":
+        case "provider_retry":
+          if (typingEl) updateTypingLabel(data.message);
+          else if (botGroup) {
+            const pb = document.createElement("div");
+            pb.className = "provider-status-badge";
+            pb.textContent = data.message;
+            botGroup.appendChild(pb);
+          }
+          break;
         case "decomposed":
           if (data.queries?.length > 1 && botGroup) appendSubQueries(botGroup, data.queries);
           break;
@@ -3087,6 +3108,26 @@
 
         case "mode": {
           setMode(data.mode);
+          break;
+        }
+
+        case "provider_switch":
+        case "provider_retry": {
+          // A free-tier provider hit its limit and the backend fell back to
+          // the next one (or is giving the whole chain one more try). Surface
+          // this so a slower-than-usual reply reads as "working on it", not
+          // "stuck" — during a blocking LLM call the typing dots are the only
+          // thing visible, so update its label; once streaming has begun,
+          // drop a small badge in the message instead.
+          if (typingEl) {
+            updateTypingLabel(data.message);
+          } else if (botGroup) {
+            const badge = document.createElement("div");
+            badge.className = "provider-status-badge";
+            badge.textContent = data.message;
+            botGroup.appendChild(badge);
+            chatEl.scrollTop = chatEl.scrollHeight;
+          }
           break;
         }
 

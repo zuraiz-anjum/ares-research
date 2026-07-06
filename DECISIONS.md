@@ -2,7 +2,7 @@
 
 ## 1. Provider swap: Groq instead of OpenAI
 
-**Context:** The assignment says OpenAI API keys but says "you can change this to other keys you may have."
+**Context:** The original scaffold defaulted to OpenAI API keys, but nothing requires sticking with that provider.
 
 **Options:** Keep OpenAI, swap to Groq, swap to Gemini free tier.
 
@@ -13,7 +13,7 @@
 
 ## 2. Token counting: character approximation instead of tiktoken
 
-**Context:** The assignment requires a configurable per-query token budget. tiktoken is OpenAI-specific and doesn't work with Groq/LLaMA.
+**Context:** A configurable per-query token budget is needed to protect against runaway cost. tiktoken is OpenAI-specific and doesn't work with Groq/LLaMA.
 
 **Options:** Use tiktoken with cl100k_base as an approximation, use LLaMA's tokeniser directly, use character count divided by 4.
 
@@ -187,10 +187,10 @@
 **Trade-off:** Embedding citations in the LLM's answer text is unreliable — LLMs hallucinate URLs and format them inconsistently. Passing sources separately is 100% accurate (they come directly from Tavily, not the LLM) and keeps the answer text clean. The collapsible UI lets power users verify sources without cluttering the default view.
 
 
-## 20. Spec ambiguities I noticed
+## 20. Ambiguities I noticed and resolved
 
-**README says OPENAI_API_KEY, brief says you can swap providers.** I swapped to Groq and documented it here rather than modifying the original README, which is the baseline artifact.
+**Original scaffold defaulted to OPENAI_API_KEY.** I swapped to Groq and documented it here rather than rewriting every provider reference in the original README wholesale.
 
-**"Reproducible/mocked run mode" is undefined.** The spec doesn't say what mock mode should cover. I implemented full isolation — when `MOCK_MODE=true`, every agent returns hardcoded responses and Tavily returns fake results. Zero external API calls. The routing tests run entirely offline in under 2 seconds.
+**"Reproducible/mocked run mode" wasn't precisely defined anywhere.** I implemented full isolation — when `MOCK_MODE=true`, every agent returns hardcoded responses and Tavily returns fake results. Zero external API calls. The routing tests run entirely offline in under 2 seconds.
 
 **Confidence threshold semantics are ambiguous.** The config field is named `confidence_threshold` but the original code used `>` not `>=`. Whether the threshold is inclusive or exclusive is unspecified. I treated it as inclusive (a score AT the threshold passes) and fixed the implementation to match.

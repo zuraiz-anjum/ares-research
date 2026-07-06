@@ -26,7 +26,7 @@ Claude suggested using `FakeListChatModel` for full LLM mocking in mock mode. I 
 
 ## Honest self-assessment
 
-What's solid: the bug fixes are thorough and well-reasoned. I understand every one of them well enough to explain live on camera, not just what the fix is, but why the original code was wrong at a conceptual level. The eval harness covers routing correctness including the boundary cases that caught two of the bugs. The production hardening (retries, timeout, token budget, bounded context, logging) addresses real failure modes, not just checkboxes.
+What's solid: the bug fixes are thorough and well-reasoned. I understand every one of them well enough to explain clearly, not just what the fix is, but why the original code was wrong at a conceptual level. The eval harness covers routing correctness including the boundary cases that caught two of the bugs. The production hardening (retries, timeout, token budget, bounded context, logging) addresses real failure modes, not just checkboxes.
 
 What's half-baked: the groundedness testing in mock mode is limited. The mock synthesis returns a hardcoded string that references the mock findings, so the groundedness test passes trivially. Testing whether a real LLM answer is actually grounded in real search results would need a semantic similarity check against a golden answer set — that's not in the test suite. It's the right gap to have because it would require non-deterministic live API calls in CI, but it's still a gap.
 

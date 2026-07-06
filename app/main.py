@@ -345,6 +345,52 @@ class ResumeRequest(BaseModel):
     clarification: str
 
 
+# Per-turn pipeline outputs (chart/PDF/critique/fact-check/etc.) that must be
+# cleared at the start of every new turn.
+#
+# LangGraph's checkpointer persists AgentState across turns *within the same
+# thread_id* — that's what makes multi-turn conversation memory work. But it
+# also means any state key NOT included in a turn's `inputs` dict simply
+# keeps whatever value the *previous* turn left it at. A "pdf" mode turn sets
+# pdf_url; the next turn in that thread might be a plain "chat" or
+# "comparison" query that never touches pdf_url at all — so the old PDF
+# (and chart, critique, fact-check results, sources, …) silently reappears
+# under the new answer, because main.py's own fallback logic
+# (`if not pdf_url: pdf_url = final_output.get("pdf_url", "")`) faithfully
+# forwards whatever is still sitting in state. Spreading this into the fresh
+# `inputs` dict for every new turn is what actually clears it.
+_FRESH_TURN_STATE: dict = {
+    "sub_queries":          [],
+    "source_url":           "",
+    "critique":             "",
+    "suggestions":          [],
+    "fact_check_results":   [],
+    "plan_steps":           [],
+    "report_content":       "",
+    "chart_url":            "",
+    "chart_urls":           [],
+    "chart_titles":         [],
+    "pdf_url":              "",
+    "sources":              [],
+    "extracted_csv_path":   "",
+    "data_is_quantitative": False,
+    "paper_abstract":       "",
+    "paper_keywords":       "",
+    "challenge_queries":    [],
+    "counter_evidence":     "",
+    "synthesis_draft":      "",
+    "vote_winner":          "",
+    "vote_reason":          "",
+    "vote_responses":       {},
+    "spawned_agents":       [],
+    "spawn_rationale":      "",
+    "findings":             "",
+    "raw_research":         "",
+    "confidence_score":     -1,
+    "validation_result":    "",
+}
+
+
 def _budget_error(inputs: dict, thread_id: str) -> dict | None:
     messages = inputs.get("messages", [])
     total_tokens = sum(len(m.content) for m in messages) // 4
@@ -535,6 +581,7 @@ async def chat(request: Request, req: ChatRequest) -> dict:
     if budget_err:
         return budget_err
     inputs: dict = {
+        **_FRESH_TURN_STATE,
         "messages":          [HumanMessage(content=req.message)],
         "attempts":          0,
         "doc_id":            req.doc_id or "",
@@ -604,6 +651,7 @@ async def chat_stream(
                 yield sse({"type": "error", "message": "Your query is too long. Please shorten it."})
                 return
             inputs = {
+                **_FRESH_TURN_STATE,
                 "messages":          [HumanMessage(content=message)],
                 "attempts":          0,
                 "doc_id":            doc_id or "",

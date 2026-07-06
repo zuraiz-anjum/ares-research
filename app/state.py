@@ -5,14 +5,22 @@ flows through the graph. The `messages` list is the running conversation
 transcript that gives each agent the context of previous turns.
 """
 
-from typing import Optional, TypedDict
+from typing import Annotated, Optional, TypedDict
 
 from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 
 
 class AgentState(TypedDict, total=False):
     # Running conversation transcript, shared across every agent and turn.
-    messages: list[AnyMessage]
+    # Annotated with add_messages so each turn's new HumanMessage/AIMessage(s)
+    # are appended to the checkpointed history instead of replacing it —
+    # without this, LangGraph's default "last write wins" merge means every
+    # new turn's `inputs["messages"]` silently wipes the entire prior
+    # transcript, and multi-turn memory (clarity, intent routing, synthesis
+    # history/summarization) never actually sees anything but the latest
+    # message.
+    messages: Annotated[list[AnyMessage], add_messages]
 
     # Clarity agent output.
     clarity_status: str            # "clear" | "needs_clarification"

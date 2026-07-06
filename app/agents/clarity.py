@@ -99,7 +99,21 @@ Return false for everything else: general research, PDF reports, comparisons, em
 code, chat, plans, data analysis, and standard reports.
 
 --- FIELD 3: question ---
-Only populated when status is "needs_clarification". Write one short, friendly question."""
+Only populated when status is "needs_clarification". Write one short, friendly question.
+
+--- CONVERSATION HISTORY ---
+If a RECENT CONVERSATION block is provided, the current message may be a
+follow-up (e.g. "which benchmarks were used?", "what about the other one?").
+Use the history to resolve pronouns and implicit references before deciding
+status — a short question is NOT ambiguous if the history already establishes
+its subject. When history resolves the reference, also fill FIELD 4 below.
+
+--- FIELD 4: standalone_query ---
+Only populated when the current message is a follow-up whose subject comes
+from history (e.g. current message "which benchmarks were used?" + history
+about "the transformer efficiency paper" -> "Which benchmarks were used in
+the transformer efficiency paper?"). Leave empty if the current message is
+already self-contained — do not rephrase it unnecessarily."""
 
 
 class ClarityVerdict(BaseModel):
@@ -109,6 +123,28 @@ class ClarityVerdict(BaseModel):
         description="True if the user wants an academic/scholarly paper output.",
     )
     question: str = Field(default="", description="Question to ask when status is needs_clarification.")
+    standalone_query: str = Field(
+        default="",
+        description="Context-resolved rewrite of a follow-up question; empty if not needed.",
+    )
+
+
+# How many prior messages to show the clarity LLM for resolving follow-up
+# references. Kept short — this is just enough for "which benchmarks were
+# used in [the thing we discussed]?", not a substitute for synthesis's own
+# full history/summary handling.
+_HISTORY_WINDOW = 6
+
+
+def _recent_history_text(state: AgentState) -> str:
+    prior = state["messages"][:-1][-_HISTORY_WINDOW:]
+    if not prior:
+        return ""
+    lines = [
+        f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {str(m.content)[:300]}"
+        for m in prior
+    ]
+    return "\n".join(lines)
 
 
 def clarity_node(state: AgentState) -> dict:
@@ -122,10 +158,17 @@ def clarity_node(state: AgentState) -> dict:
     if settings.mock_mode:
         return {"clarity_status": "clear", "original_query": user_query}
 
+    history = _recent_history_text(state)
+    human_content = (
+        f"RECENT CONVERSATION:\n{history}\n\nCurrent message: {user_query}"
+        if history else user_query
+    )
+
     llm = get_llm(temperature=0).with_structured_output(ClarityVerdict)
     verdict: ClarityVerdict = llm.invoke(
-        [SystemMessage(content=CLARITY_SYSTEM_PROMPT), HumanMessage(content=user_query)]
+        [SystemMessage(content=CLARITY_SYSTEM_PROMPT), HumanMessage(content=human_content)]
     )
+    resolved_query = verdict.standalone_query or user_query
 
     # ── Academic paper: collect the four upfront requirements ──────────────
     # Always fires before general clarification so the pipeline gets the full
@@ -133,7 +176,7 @@ def clarity_node(state: AgentState) -> dict:
     if verdict.is_academic_paper:
         answers = interrupt(ACADEMIC_MCQ)
         enriched_query = (
-            f"{user_query}\n\n"
+            f"{resolved_query}\n\n"
             f"--- Paper requirements (provided by user) ---\n"
             f"{answers}"
         )
@@ -148,4 +191,4 @@ def clarity_node(state: AgentState) -> dict:
         answer = interrupt({"question": verdict.question})
         return {"clarity_status": "clear", "clarification": answer, "original_query": user_query}
 
-    return {"clarity_status": "clear", "original_query": user_query}
+    return {"clarity_status": "clear", "original_query": resolved_query}

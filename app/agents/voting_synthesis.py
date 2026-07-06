@@ -131,11 +131,15 @@ async def voting_synthesis_node(state: AgentState) -> dict:
     research = state.get("findings", "") or state.get("raw_research", "")
     research, _ = truncate_to_budget(research, label="voting_synthesis_findings")
 
-    # Inject cross-session entity memory if available
+    # Inject cross-session entity memory if available.
+    # recall() does a synchronous full-file read — offload to a thread so it
+    # doesn't block the event loop for every other in-flight request.
     prior_context = ""
     try:
+        import asyncio
         from app.memory.entity_store import recall
-        recalled = recall(query)
+        loop = asyncio.get_running_loop()
+        recalled = await loop.run_in_executor(None, recall, query)
         if recalled:
             prior_context = f"Prior context from earlier sessions:\n{recalled}\n\n"
     except Exception:

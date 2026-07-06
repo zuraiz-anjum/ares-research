@@ -49,6 +49,7 @@ from app.utils.calibration import (
     prompt_health_report,
 )
 from app.utils.search_cache import cache_stats as _search_cache_stats
+from app.utils.background import spawn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,7 +100,7 @@ async def _init_db() -> None:
     logger.info(f"history_loaded count={len(rows)}")
 
 
-ANALYTICS_DB = "ares_analytics.db"
+ANALYTICS_DB = _data_path("ares_analytics.db")
 
 
 async def _init_analytics_db() -> None:
@@ -138,6 +139,32 @@ async def _init_analytics_db() -> None:
         await db.commit()
 
 
+# `sessions` and `usage` get an INSERT on every single request with no
+# retention policy — the in-memory `_history` deque is capped at 50, but the
+# underlying tables aren't, so they grow for as long as the app runs. Neither
+# endpoint that reads them (`/history` last-50, `/analytics` last-7-days,
+# `/cost` last-24h) ever looks back further than a week, so 90 days is a
+# generous retention window that still bounds growth. Throttled to once an
+# hour like the search-cache prune, since this runs on every write.
+_ROW_RETENTION_DAYS = 90
+_last_row_prune: float = 0.0
+
+
+async def _maybe_prune_old_rows() -> None:
+    global _last_row_prune
+    now = time.time()
+    if now - _last_row_prune <= 3600:
+        return
+    _last_row_prune = now
+    cutoff = f"datetime('now', '-{_ROW_RETENTION_DAYS} days')"
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"DELETE FROM sessions WHERE timestamp < {cutoff}")
+        await db.commit()
+    async with aiosqlite.connect(ANALYTICS_DB) as db:
+        await db.execute(f"DELETE FROM usage WHERE timestamp < {cutoff}")
+        await db.commit()
+
+
 async def _save_session(session: dict) -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
@@ -151,12 +178,13 @@ async def _save_session(session: dict) -> None:
             ),
         )
         await db.commit()
+    await _maybe_prune_old_rows()
 
 
 CHECKPOINT_DB = _data_path("ares_checkpoints.db")
 
 
-UPLOADS_DIR = "uploads"
+UPLOADS_DIR = _data_path("uploads")
 _ALLOWED_EXTENSIONS       = {".pdf", ".txt", ".md", ".docx"}
 _ALLOWED_SURVEY_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 _ALLOWED_IMAGE_EXTENSIONS  = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
@@ -164,7 +192,14 @@ _MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 MB
 
 
 def _cleanup_old_files(*dirs: str, max_age_seconds: int = 86400) -> None:
-    """Delete files older than max_age_seconds (default 24 h) from dirs."""
+    """Delete files older than max_age_seconds (default 24 h) from dirs.
+
+    Files purged from UPLOADS_DIR also get their embedded chunks removed from
+    the vector store — otherwise ChromaDB kept every document's embeddings
+    forever even after the source file (and any way to re-derive doc_id) was
+    long gone. Upload filenames are always f"{doc_id}{ext}", so the stem is
+    the doc_id.
+    """
     cutoff = time.time() - max_age_seconds
     total = 0
     for d in dirs:
@@ -176,6 +211,12 @@ def _cleanup_old_files(*dirs: str, max_age_seconds: int = 86400) -> None:
                 try:
                     f.unlink()
                     total += 1
+                    if d == UPLOADS_DIR:
+                        try:
+                            from app.rag.store import delete_document
+                            delete_document(f.stem)
+                        except Exception:
+                            logger.warning(f"vectorstore_cleanup_failed doc_id={f.stem}", exc_info=True)
                 except OSError:
                     pass
     if total:
@@ -209,6 +250,9 @@ async def lifespan(_: FastAPI):
         logger.info(f"checkpoint_db={CHECKPOINT_DB} persistent=true")
         yield
 
+    if _slack_session is not None and not _slack_session.closed:
+        await _slack_session.close()
+
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Ares — Autonomous Research & Evidence System", lifespan=lifespan)
@@ -228,15 +272,26 @@ app.add_middleware(
 # When APP_PASSWORD is empty, all routes are open (dev mode).
 
 _SESSION_COOKIE = "ares_session"
-_active_tokens: set[str] = set()
+_SESSION_TTL_SECONDS = 86400 * 7  # matches the cookie's max_age below
+# token -> expiry unix timestamp. Previously a bare set with no expiry
+# tracking, so it only ever grew for as long as the process ran and forced
+# every logged-in user to re-authenticate on every deploy/restart regardless.
+_active_tokens: dict[str, float] = {}
+
+
+def _prune_expired_tokens() -> None:
+    now = time.time()
+    for token in [t for t, exp in _active_tokens.items() if exp <= now]:
+        _active_tokens.pop(token, None)
 
 
 def _check_auth(request: Request) -> bool:
-    """Return True if auth is disabled or the request carries a valid session."""
+    """Return True if auth is disabled or the request carries a valid, unexpired session."""
     if not settings.app_password:
         return True
     token = request.cookies.get(_SESSION_COOKIE, "")
-    return token in _active_tokens
+    expiry = _active_tokens.get(token)
+    return expiry is not None and expiry > time.time()
 
 
 class LoginRequest(BaseModel):
@@ -251,18 +306,19 @@ async def login(req: LoginRequest, response: Response) -> dict:
     given    = hashlib.sha256(req.password.encode()).hexdigest()
     if not secrets.compare_digest(expected, given):
         raise HTTPException(401, "Invalid password")
+    _prune_expired_tokens()
     token = secrets.token_hex(32)
-    _active_tokens.add(token)
+    _active_tokens[token] = time.time() + _SESSION_TTL_SECONDS
     response.set_cookie(
         _SESSION_COOKIE, token,
-        httponly=True, samesite="strict", max_age=86400 * 7,
+        httponly=True, samesite="strict", max_age=_SESSION_TTL_SECONDS,
     )
     return {"status": "ok"}
 
 
 @app.post("/auth/logout")
 async def logout(response: Response, ares_session: str = Cookie(default="")) -> dict:
-    _active_tokens.discard(ares_session)
+    _active_tokens.pop(ares_session, None)
     response.delete_cookie(_SESSION_COOKIE)
     return {"status": "ok"}
 
@@ -783,34 +839,34 @@ async def chat_stream(
             "provider":    provider_used,
         }
         _history.appendleft(session)
-        asyncio.create_task(_save_session(session))
-        asyncio.create_task(_save_usage(detected_mode, token_count, latency_ms, provider_used, confidence_score))
+        spawn(_save_session(session))
+        spawn(_save_usage(detected_mode, token_count, latency_ms, provider_used, confidence_score))
 
         # Record calibration signals for confidence / quality analysis.
-        asyncio.create_task(_record_calibration(
+        spawn(_record_calibration(
             thread_id=_thread_id, mode=detected_mode, confidence_score=confidence_score,
             fact_check_results=fact_check_results, draft_score=draft_score,
             challenger_found=challenger_found, vote_winner=vote_winner, latency_ms=latency_ms,
         ))
         # Per-node quality metrics for prompt health dashboard.
         if draft_score >= 0:
-            asyncio.create_task(_record_prompt_metric("draft_critic", "draft_score", float(draft_score), detected_mode))
+            spawn(_record_prompt_metric("draft_critic", "draft_score", float(draft_score), detected_mode))
         if fact_check_results:
             _passed = sum(
                 1 for r in fact_check_results
                 if isinstance(r, dict) and r.get("result", "").lower() in ("true", "pass", "supported", "verified")
             )
-            asyncio.create_task(_record_prompt_metric(
+            spawn(_record_prompt_metric(
                 "fact_checker", "pass_rate", _passed / len(fact_check_results), detected_mode
             ))
         if challenger_found is not None:
-            asyncio.create_task(_record_prompt_metric("challenger", "counter_found", float(challenger_found), detected_mode))
+            spawn(_record_prompt_metric("challenger", "counter_found", float(challenger_found), detected_mode))
         if vote_winner:
-            asyncio.create_task(_record_prompt_metric("voting_synthesis", f"winner_{vote_winner}", 1.0, detected_mode))
+            spawn(_record_prompt_metric("voting_synthesis", f"winner_{vote_winner}", 1.0, detected_mode))
 
         # Fire Slack webhook in background if configured and report-worthy.
         if settings.slack_webhook_url and detected_mode in ("research", "report", "pdf", "comparison"):
-            asyncio.create_task(_notify_slack(message, full_answer, pdf_url, detected_mode))
+            spawn(_notify_slack(message, full_answer, pdf_url, detected_mode))
 
         source_url = final_output.get("source_url", "")
         logger.info(
@@ -862,10 +918,20 @@ async def _save_usage(mode: str, token_count: int, latency_ms: int, provider: st
         await db.commit()
 
 
+_slack_session = None  # aiohttp.ClientSession, created lazily and reused
+
+
+async def _get_slack_session():
+    global _slack_session
+    import aiohttp
+    if _slack_session is None or _slack_session.closed:
+        _slack_session = aiohttp.ClientSession()
+    return _slack_session
+
+
 async def _notify_slack(query: str, answer: str, pdf_url: str, mode: str) -> None:
     """POST a summary to the configured Slack incoming-webhook URL."""
     try:
-        import aiohttp
         preview = answer[:280] + ("…" if len(answer) > 280 else "")
         blocks = [
             {"type": "header", "text": {"type": "plain_text", "text": f"Ares • {mode.upper()} complete"}},
@@ -873,8 +939,8 @@ async def _notify_slack(query: str, answer: str, pdf_url: str, mode: str) -> Non
         ]
         if pdf_url:
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"<{pdf_url}|Download PDF>"}})
-        async with aiohttp.ClientSession() as session:
-            await session.post(settings.slack_webhook_url, json={"blocks": blocks})
+        session = await _get_slack_session()
+        await session.post(settings.slack_webhook_url, json={"blocks": blocks})
     except Exception:
         logger.warning("slack_webhook_failed", exc_info=True)
 
@@ -894,10 +960,13 @@ async def create_share(request: Request, req: ShareRequest) -> dict:
     if not _check_auth(request):
         raise HTTPException(401, "Authentication required")
     # Resolve and jail file path to static/reports or static/charts only.
+    # Real containment check (root in file_path.parents), not a string prefix —
+    # a raw str.startswith() would also match a sibling directory like
+    # "static/reports_backup" since "reports_backup" starts with "reports".
     rel = req.file_url.lstrip("/")
     file_path = Path(rel).resolve()
     _allowed_roots = [Path("static/reports").resolve(), Path("static/charts").resolve()]
-    if not any(str(file_path).startswith(str(root)) for root in _allowed_roots):
+    if not any(root == file_path or root in file_path.parents for root in _allowed_roots):
         raise HTTPException(400, "Only files in static/reports or static/charts can be shared")
     if not file_path.exists():
         raise HTTPException(404, "File not found")
@@ -1212,7 +1281,7 @@ async def schedule_task(request: Request, req: ScheduleRequest) -> dict:
         cur = await db.execute("SELECT last_insert_rowid()")
         task_id = (await cur.fetchone())[0]
     if req.run_now:
-        asyncio.create_task(_run_scheduled(task_id, req.query, req.email))
+        spawn(_run_scheduled(task_id, req.query, req.email))
     return {"task_id": task_id, "status": "scheduled", "query": req.query}
 
 
@@ -1239,7 +1308,7 @@ async def _run_scheduled(task_id: int, query: str, email: str) -> None:
         answer = result["messages"][-1].content if result.get("messages") else ""
         logger.info(f"scheduled_task_complete id={task_id}")
         if email and settings.smtp_host:
-            asyncio.create_task(_send_email(email, f"Ares Report: {query[:60]}", answer))
+            spawn(_send_email(email, f"Ares Report: {query[:60]}", answer))
         async with aiosqlite.connect(ANALYTICS_DB) as db:
             await db.execute(
                 "UPDATE scheduled_tasks SET last_run_at = ? WHERE id = ?",

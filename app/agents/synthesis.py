@@ -107,10 +107,14 @@ async def synthesis_node(state: AgentState) -> dict:
         research, _ = truncate_to_budget(research, label="synthesis_findings")
 
         # Inject cross-session entity memory when available.
+        # recall() does a synchronous full-file read — offload to a thread so
+        # it doesn't block the event loop for every other in-flight request.
         prior_context = ""
         try:
+            import asyncio
             from app.memory.entity_store import recall
-            recalled = recall(state.get("original_query", ""))
+            loop = asyncio.get_running_loop()
+            recalled = await loop.run_in_executor(None, recall, state.get("original_query", ""))
             if recalled:
                 prior_context = recalled + "\n\n"
         except Exception:
@@ -128,13 +132,12 @@ async def synthesis_node(state: AgentState) -> dict:
         try:
             import asyncio
             from app.memory.entity_store import extract_and_store
+            from app.utils.background import spawn
             findings = state.get("findings", "")
             query    = state.get("original_query", "")
             if findings and query:
                 loop = asyncio.get_running_loop()
-                asyncio.create_task(
-                    loop.run_in_executor(None, extract_and_store, findings, query)
-                )
+                spawn(loop.run_in_executor(None, extract_and_store, findings, query))
         except Exception:
             pass
 

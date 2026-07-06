@@ -26,11 +26,13 @@ from typing import Optional
 
 import aiosqlite
 
-from app.config import settings
+from app.config import settings, _data_path
 
 logger = logging.getLogger(__name__)
 
-ANALYTICS_DB = "ares_analytics.db"
+# Must match ANALYTICS_DB in app/main.py and app/utils/checkpoint.py — all
+# three modules write to the same physical ares_analytics.db.
+ANALYTICS_DB = _data_path("ares_analytics.db")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS calibration (

@@ -24,9 +24,15 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from app.config import _data_path
+
 logger = logging.getLogger(__name__)
 
-ANALYTICS_DB = "ares_analytics.db"
+# Must match the ANALYTICS_DB path used by app/main.py and app/utils/calibration.py —
+# all three write to the same physical file (node_checkpoints, usage, calibration
+# tables all live in ares_analytics.db). Going through _data_path() keeps this on
+# the persistent volume (DATA_DIR) alongside the other databases when one is mounted.
+ANALYTICS_DB = _data_path("ares_analytics.db")
 
 # Propagated automatically to child coroutines/tasks by Python's asyncio.
 _current_thread_id: contextvars.ContextVar[str] = contextvars.ContextVar("cp_thread_id", default="-")
@@ -55,6 +61,39 @@ CREATE TABLE IF NOT EXISTS node_checkpoints (
 
 # Add error_type column to existing DBs that were created before it existed.
 _MIGRATION_DDL = "ALTER TABLE node_checkpoints ADD COLUMN error_type TEXT"
+
+# Every node writes 2+ rows here per request (started + completed/failed), with
+# no retention policy this table was the fastest-growing thing in the whole
+# system and /diagnostics + /errors filter on these columns without an index —
+# both problems get worse together as the table grows.
+_INDEX_DDL = [
+    "CREATE INDEX IF NOT EXISTS idx_node_checkpoints_thread ON node_checkpoints(thread_id)",
+    "CREATE INDEX IF NOT EXISTS idx_node_checkpoints_node_status ON node_checkpoints(node, status)",
+    "CREATE INDEX IF NOT EXISTS idx_node_checkpoints_status_ts ON node_checkpoints(status, timestamp)",
+]
+
+# /errors caps its lookback window at 168 hours (7 days) — nothing outside that
+# window is ever queryable through the API, so it's a safe retention horizon.
+_RETENTION_DAYS = 7
+_last_prune: float = 0.0
+
+
+def _prune_old_sync(db) -> None:
+    global _last_prune
+    now = time.time()
+    if now - _last_prune > 3600:
+        db.execute(f"DELETE FROM node_checkpoints WHERE timestamp < datetime('now', '-{_RETENTION_DAYS} days')")
+        db.commit()
+        _last_prune = now
+
+
+async def _prune_old_async(db) -> None:
+    global _last_prune
+    now = time.time()
+    if now - _last_prune > 3600:
+        await db.execute(f"DELETE FROM node_checkpoints WHERE timestamp < datetime('now', '-{_RETENTION_DAYS} days')")
+        await db.commit()
+        _last_prune = now
 
 
 def _ensure_table_sync() -> None:
@@ -87,6 +126,8 @@ def _save_sync(
                 db.execute(_MIGRATION_DDL); db.commit()
             except Exception:
                 pass
+            for ddl in _INDEX_DDL:
+                db.execute(ddl)
             db.execute(
                 "INSERT INTO node_checkpoints "
                 "(thread_id, node, status, input_summary, output_summary, error, error_type, duration_ms, timestamp) "
@@ -100,6 +141,7 @@ def _save_sync(
                 ),
             )
             db.commit()
+            _prune_old_sync(db)
     except Exception:
         logger.warning(f"checkpoint_save_sync_failed node={node}", exc_info=True)
 
@@ -122,6 +164,8 @@ async def _save_async(
                 await db.commit()
             except Exception:
                 pass
+            for ddl in _INDEX_DDL:
+                await db.execute(ddl)
             await db.execute(
                 "INSERT INTO node_checkpoints "
                 "(thread_id, node, status, input_summary, output_summary, error, error_type, duration_ms, timestamp) "
@@ -135,6 +179,7 @@ async def _save_async(
                 ),
             )
             await db.commit()
+            await _prune_old_async(db)
     except Exception:
         logger.warning(f"checkpoint_save_async_failed node={node}", exc_info=True)
 

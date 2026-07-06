@@ -8,9 +8,11 @@ initialised on first use and reused across requests (thread-safe in ChromaDB).
 import logging
 import os
 
+from app.config import _data_path
+
 logger = logging.getLogger(__name__)
 
-CHROMA_PATH = "ares_vectorstore"
+CHROMA_PATH = _data_path("ares_vectorstore")
 _collection = None
 
 

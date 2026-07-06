@@ -9,14 +9,31 @@ reducing hallucination and improving consistency across sessions.
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from app.config import _data_path
+
 logger = logging.getLogger(__name__)
 
-_STORE_PATH = Path("ares_entity_memory.json")
+_STORE_PATH = Path(_data_path("ares_entity_memory.json"))
+
+# Per-entity facts/queries are already capped below, but the *number* of
+# distinct entities was never capped — every company/person ever mentioned
+# stayed in the store forever, and the whole file is read + rewritten in full
+# on every extract_and_store() call, so it got slower as it grew. Evict the
+# least-recently-updated entities beyond this cap.
+_MAX_ENTITIES = 500
+
+# extract_and_store() does read-modify-write on the same file with no locking.
+# Two concurrent calls (plausible — it runs in a thread-pool executor per
+# request) can both read the same starting state and then the second _save()
+# silently clobbers the first's changes. This lock serialises access within
+# the process (sufficient here since the app runs as a single worker).
+_lock = threading.Lock()
 
 
 def _load() -> dict:
@@ -63,24 +80,31 @@ def extract_and_store(findings: str, query: str) -> int:
         if not result.entities:
             return 0
 
-        store = _load()
-        now = datetime.now(timezone.utc).isoformat()
-        for entity in result.entities:
-            name = entity.get("name", "").strip()
-            facts = entity.get("facts", [])
-            if not name or not facts:
-                continue
-            key = name.lower()
-            if key not in store:
-                store[key] = {"name": name, "facts": [], "updated_at": now, "source_queries": []}
-            # Merge facts (avoid exact duplicates)
-            existing = set(store[key]["facts"])
-            new_facts = [f for f in facts if f not in existing]
-            store[key]["facts"] = list(existing | set(new_facts))[-50:]  # cap at 50
-            store[key]["updated_at"] = now
-            store[key]["source_queries"] = (store[key].get("source_queries", []) + [query])[-5:]
+        with _lock:
+            store = _load()
+            now = datetime.now(timezone.utc).isoformat()
+            for entity in result.entities:
+                name = entity.get("name", "").strip()
+                facts = entity.get("facts", [])
+                if not name or not facts:
+                    continue
+                key = name.lower()
+                if key not in store:
+                    store[key] = {"name": name, "facts": [], "updated_at": now, "source_queries": []}
+                # Merge facts (avoid exact duplicates)
+                existing = set(store[key]["facts"])
+                new_facts = [f for f in facts if f not in existing]
+                store[key]["facts"] = list(existing | set(new_facts))[-50:]  # cap at 50
+                store[key]["updated_at"] = now
+                store[key]["source_queries"] = (store[key].get("source_queries", []) + [query])[-5:]
 
-        _save(store)
+            if len(store) > _MAX_ENTITIES:
+                by_recency = sorted(store.items(), key=lambda kv: kv[1].get("updated_at", ""), reverse=True)
+                evicted = len(store) - _MAX_ENTITIES
+                store = dict(by_recency[:_MAX_ENTITIES])
+                logger.info(f"entity_memory_evicted count={evicted}")
+
+            _save(store)
         logger.info(f"entity_memory_stored entities={len(result.entities)}")
         return len(result.entities)
     except Exception:

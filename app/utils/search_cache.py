@@ -16,11 +16,11 @@ import sqlite3
 import time
 from pathlib import Path
 
-from app.config import settings
+from app.config import settings, _data_path
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DB = "ares_cache.db"
+_CACHE_DB = _data_path("ares_cache.db")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS search_cache (

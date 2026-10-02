@@ -1,6 +1,48 @@
-# Ares — Autonomous Research & Evidence System
+# ARES
 
-A production-grade **multi-agent research assistant** built with **LangGraph**, **FastAPI**, **ChromaDB RAG**, and **SSE streaming**. Ask a single question — Ares orchestrates 26 specialized agents across 14 pipeline modes, runs parallel web searches, fact-checks and critiques its own drafts, generates charts and PDFs, and streams the answer in real time.
+**Ask one research question and get back a cited, fact-checked report written by a team of specialist agents.**
+
+![Tests](https://img.shields.io/badge/tests-123-blue)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-multi--agent-1C3C3C)
+![FastAPI](https://img.shields.io/badge/FastAPI-SSE-009688?logo=fastapi&logoColor=white)
+
+Runs locally in a few minutes: see the quick start below.
+
+![ARES interface](docs/screenshot.png)
+
+![Demo](docs/demo.gif)
+<!-- Record docs/demo.gif: a comparison query streaming through the agents into a finished report. -->
+
+## What it does
+
+ARES treats research as a job for a team rather than a single prompt. A router reads the
+question and picks one of 14 workflows (research, report, PDF, comparison, debate, data
+analysis and more). Planner, search, writer and critic agents then work in sequence and
+in parallel: web search runs concurrently, a fact checker verifies claims, a critic scores
+the draft and sends weak writing back for revision, and three independent drafts are
+judged before a research answer ships. The answer streams to the browser as it is built,
+with sources, charts and PDF or PPTX export.
+
+## By the numbers
+
+| | |
+|---|---|
+| Automated tests | 123 total; 122 pass offline with no API keys, the remaining one calls the live Tavily search API |
+| Agents | 27 nodes in the LangGraph state machine |
+| Workflows | 14 pipeline modes chosen by an intent router |
+| HTTP API | 25 routes, including SSE streaming at `/chat/stream` |
+| LLM providers | 4 with automatic failover: Groq, Cerebras, Gemini, OpenRouter |
+| Code size | about 9,380 lines of Python plus a 3,340 line single-page UI (non-blank) |
+
+## Architecture at a glance
+
+FastAPI serves the UI and the API. Each request runs through a LangGraph state machine
+with a SQLite checkpointer, so a conversation keeps its memory across turns and can be
+resumed. Retrieval uses ChromaDB with FlashRank reranking over uploaded PDF, DOCX and
+TXT files, and Tavily for the live web. Every LLM call goes through one client that
+tracks cost and moves to the next provider on rate limits. The full graph is in
+[Architecture](#architecture) below.
 
 ---
 
@@ -8,53 +50,53 @@ A production-grade **multi-agent research assistant** built with **LangGraph**, 
 
 ```mermaid
 graph TD
-    START --> clarity["🎯 Clarity\nValidates question + resolves\nfollow-ups via conversation history"]
-    clarity --> intent_router["🗺️ Intent Router\nSelects 1 of 14 pipeline modes"]
+    START --> clarity["Clarity\nValidates question + resolves\nfollow-ups via conversation history"]
+    clarity --> intent_router["Intent Router\nSelects 1 of 14 pipeline modes"]
 
-    intent_router -->|research / report / pdf / data / comparison / debate / email / academic| decomposer["🔍 Decomposer\nBreaks into sub-queries"]
+    intent_router -->|research / report / pdf / data / comparison / debate / email / academic| decomposer["Decomposer\nBreaks into sub-queries"]
     intent_router -->|chat| synthesis
-    intent_router -->|document| doc_agent["📎 Doc Agent\nRAG / URL fetch"]
-    intent_router -->|plan| planner["📋 Planner\nStructures research"]
-    intent_router -->|code| code_writer["💻 Code Writer"]
-    intent_router -->|chart| chart_writer["📊 Chart Writer"]
-    intent_router -->|survey| survey_analyst["📐 Survey Analyst\nCSV/Excel analysis"]
+    intent_router -->|document| doc_agent["Doc Agent\nRAG / URL fetch"]
+    intent_router -->|plan| planner["Planner\nStructures research"]
+    intent_router -->|code| code_writer["Code Writer"]
+    intent_router -->|chart| chart_writer["Chart Writer"]
+    intent_router -->|survey| survey_analyst["Survey Analyst\nCSV/Excel analysis"]
 
     planner --> research
-    decomposer --> research["🌐 Research\nParallel Tavily search (ThreadPoolExecutor)"]
+    decomposer --> research["Research\nParallel Tavily search (ThreadPoolExecutor)"]
     research -->|confidence ≥ threshold| route_out["Route by mode"]
-    research -->|confidence < threshold| validator["✅ Validator"]
+    research -->|confidence < threshold| validator["Validator"]
     validator -->|sufficient / max attempts| route_out
     validator -->|insufficient + attempts left| research
 
     doc_agent --> synthesis
-    route_out -->|research| voting_synthesis["🗳️ Voting Synthesis\n3 parallel perspectives + judge"]
-    route_out -->|plan| dynamic_spawner["⚡ Dynamic Spawner\nActivates specialist agents"]
-    route_out -->|report / pdf / data_analysis / comparison / academic| data_extractor["📥 Data Extractor\nPulls quantitative data"]
-    route_out -->|debate| debate_writer["🥊 Debate Writer"]
-    route_out -->|email| email_drafter["✉️ Email Drafter"]
+    route_out -->|research| voting_synthesis["Voting Synthesis\n3 parallel perspectives + judge"]
+    route_out -->|plan| dynamic_spawner["Dynamic Spawner\nActivates specialist agents"]
+    route_out -->|report / pdf / data_analysis / comparison / academic| data_extractor["Data Extractor\nPulls quantitative data"]
+    route_out -->|debate| debate_writer["Debate Writer"]
+    route_out -->|email| email_drafter["Email Drafter"]
 
-    data_extractor -->|report / pdf| report_writer["📝 Report Writer"]
-    data_extractor -->|comparison| comparison_matrix["⚖️ Comparison Matrix"]
-    data_extractor -->|data_analysis| data_analyst["📈 Data Analyst"]
-    data_extractor -->|academic| academic_writer["🎓 Academic Writer\nAbstract, citations, References"]
+    data_extractor -->|report / pdf| report_writer["Report Writer"]
+    data_extractor -->|comparison| comparison_matrix["Comparison Matrix"]
+    data_extractor -->|data_analysis| data_analyst["Data Analyst"]
+    data_extractor -->|academic| academic_writer["Academic Writer\nAbstract, citations, References"]
 
-    voting_synthesis --> challenger["⚔️ Challenger\nAdversarial counter-evidence"]
+    voting_synthesis --> challenger["Challenger\nAdversarial counter-evidence"]
     dynamic_spawner --> challenger
-    challenger --> fact_checker["🔬 Fact Checker"]
-    fact_checker --> critic["🧐 Critic"]
+    challenger --> fact_checker["Fact Checker"]
+    fact_checker --> critic["Critic"]
 
-    report_writer --> draft_critic["📐 Draft Critic\nScores + loops back for revision"]
+    report_writer --> draft_critic["Draft Critic\nScores + loops back for revision"]
     comparison_matrix --> draft_critic
     data_analyst --> draft_critic
     academic_writer --> draft_critic
     draft_critic -->|revise| report_writer
-    draft_critic -->|accepted| data_visualizer["📊 Data Visualizer\nMatplotlib charts"]
+    draft_critic -->|accepted| data_visualizer["Data Visualizer\nMatplotlib charts"]
 
-    data_visualizer -->|pdf / academic| pdf_generator["📄 PDF Generator"]
+    data_visualizer -->|pdf / academic| pdf_generator["PDF Generator"]
     data_visualizer -->|other| suggestions
     pdf_generator --> suggestions
     survey_analyst --> suggestions
-    synthesis --> suggestions["💡 Suggestions\nUniversal terminal node"]
+    synthesis --> suggestions["Suggestions\nUniversal terminal node"]
     critic --> suggestions
     debate_writer --> suggestions
     email_drafter --> suggestions
@@ -63,7 +105,7 @@ graph TD
     suggestions --> END
 ```
 
-*Simplified for readability — self-correction loops (draft revision, research retry) and exact edge conditions live in `app/graph.py`.*
+*Simplified for readability, self-correction loops (draft revision, research retry) and exact edge conditions live in `app/graph.py`.*
 
 ---
 
@@ -72,7 +114,7 @@ graph TD
 | Category | What's included |
 |---|---|
 | **14 pipeline modes** | Research, Report, PDF, Academic Paper, Data Analysis, Comparison, Debate, Email, Plan, Chat, Document, Code, Chart, Survey |
-| **26 LangGraph agents** | Each a typed node with structured output and confidence scoring |
+| **27 LangGraph nodes** | Each a typed node with structured output and confidence scoring |
 | **Self-correction** | Fact-checker verifies claims, critic scores drafts, draft-critic loop revises weak writing, challenger hunts adversarial counter-evidence |
 | **Voting synthesis** | Research answers: 3 independent LLM perspectives + a 4th judge that picks the strongest and explains why |
 | **Multi-provider LLM** | Groq → Cerebras → Gemini → OpenRouter fallback chain, auto-advances on rate limits, live "switching provider" status shown mid-request |
@@ -82,7 +124,7 @@ graph TD
 | **Persistent memory** | SQLite checkpointer (LangGraph) with proper multi-turn message accumulation + rolling conversation summary + cross-session entity memory |
 | **Exports** | PDF (ReportLab), PPTX (python-pptx), shareable public links |
 | **Voice input** | Web Speech API mic button in the UI |
-| **Analytics** | `/dashboard` with Chart.js — daily volume, mode distribution, provider split, avg latency |
+| **Analytics** | `/dashboard` with Chart.js, daily volume, mode distribution, provider split, avg latency |
 | **Observability** | LangSmith tracing (set `LANGSMITH_API_KEY`) |
 | **Integrations** | Slack webhook, SMTP email, scheduled research tasks |
 | **Auth** | Cookie-based password gate (`APP_PASSWORD` env var) |
@@ -93,8 +135,8 @@ graph TD
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ares-research-assistant
-cd ares-research-assistant
+git clone https://github.com/zuraiz-anjum/ares-research
+cd ares-research
 
 python -m venv .venv
 .venv/Scripts/activate          # Windows
@@ -103,7 +145,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 cp .env.example .env
-# Edit .env — fill in at least GROQ_API_KEY + TAVILY_API_KEY
+# Edit .env, fill in at least GROQ_API_KEY + TAVILY_API_KEY
 ```
 
 Start the server:
@@ -149,8 +191,8 @@ Access at http://localhost:8000. All SQLite databases and generated files are mo
 
 ```
 app/
-  main.py              FastAPI app — all routes, SSE, auth, analytics
-  graph.py             LangGraph 26-node state machine
+  main.py              FastAPI app, all routes, SSE, auth, analytics
+  graph.py             LangGraph 27-node state machine
   state.py             AgentState TypedDict
   config.py            Pydantic settings (all env vars)
   llm.py               Multi-provider fallback LLM factory
@@ -173,7 +215,7 @@ app/
     data_extractor.py    Pulls quantitative data before visual/writer nodes
     data_visualizer.py   Matplotlib chart generation
     survey_analyst.py    CSV/Excel survey analysis
-    academic_writer.py   Academic paper — Abstract, citations, References
+    academic_writer.py   Academic paper, Abstract, citations, References
     report_writer.py
     pdf_generator.py     ReportLab PDF
     pptx_generator.py    python-pptx PowerPoint
@@ -182,7 +224,7 @@ app/
     code_writer.py
     debate_writer.py
     email_drafter.py
-    suggestions.py       Universal terminal node — proposes follow-ups
+    suggestions.py       Universal terminal node, proposes follow-ups
   rag/
     loader.py          PDF/DOCX/TXT chunker
     store.py           ChromaDB store + search_multi
@@ -251,20 +293,20 @@ Scores each response on faithfulness (0-10), answer relevance (0-10), and retrie
 1. Push this repo to GitHub
 2. Create a new Railway project → **Deploy from GitHub repo**
 3. Add environment variables (at minimum `GROQ_API_KEY` + `TAVILY_API_KEY`)
-4. Railway auto-detects the `Dockerfile` — done
+4. Railway auto-detects the `Dockerfile`, done
 
 ---
 
 ## Tech Stack
 
-- **LangGraph** 0.2+ — stateful multi-agent graph
-- **LangChain** — LLM abstraction, structured output
-- **FastAPI** + **uvicorn** — async HTTP + SSE
-- **ChromaDB** — local vector store
-- **FlashRank** — cross-encoder reranking
-- **ReportLab** — PDF generation
-- **python-pptx** — PowerPoint export
-- **Matplotlib** — chart rendering
-- **aiosqlite** — async SQLite (history + checkpoints + analytics)
-- **Groq / Cerebras / Gemini / OpenRouter** — LLM providers
-- **Tavily** — web search API
+- **LangGraph** 0.2+, stateful multi-agent graph
+- **LangChain**, LLM abstraction, structured output
+- **FastAPI** + **uvicorn**, async HTTP + SSE
+- **ChromaDB**, local vector store
+- **FlashRank**, cross-encoder reranking
+- **ReportLab**, PDF generation
+- **python-pptx**, PowerPoint export
+- **Matplotlib**, chart rendering
+- **aiosqlite**, async SQLite (history + checkpoints + analytics)
+- **Groq / Cerebras / Gemini / OpenRouter**, LLM providers
+- **Tavily**, web search API

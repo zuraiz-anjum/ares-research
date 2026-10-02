@@ -286,17 +286,6 @@ Scores each response on faithfulness (0-10), answer relevance (0-10), and retrie
 
 ---
 
-## Deploy to Railway
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app)
-
-1. Push this repo to GitHub
-2. Create a new Railway project → **Deploy from GitHub repo**
-3. Add environment variables (at minimum `GROQ_API_KEY` + `TAVILY_API_KEY`)
-4. Railway auto-detects the `Dockerfile`, done
-
----
-
 ## Tech Stack
 
 - **LangGraph** 0.2+, stateful multi-agent graph
